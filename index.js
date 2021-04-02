@@ -29,6 +29,7 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('notice', { message: `${username}이(가) 서버에 접속했습니다!` });
         socket.emit('admin_message', { message: `사용자 이름 '${username}'을(를) 부여받았습니다`, name: username });
         dataManage.setUser(socket.id, { name: username });
+        dataManage.setSocket(socket);
     });
 
     socket.on('change_name', (data) => {
@@ -46,7 +47,11 @@ io.on('connection', (socket) => {
     socket.on('global_message', (data) => {
         const user = dataManage.getUser(socket.id);
 
-        socket.broadcast.emit('global_message', { user: user.name, message: data.text });
+        dataManage.getSocketIds().forEach(socketId => {
+            if (!dataManage.getDisableLoudSpeakerKeys().includes(socketId)) {
+                io.to(socketId).emit('global_message', { user: user.name, message: data.text });
+            }
+        })
     });
 
     socket.on('update_global_message_settings', () => {
@@ -63,7 +68,24 @@ io.on('connection', (socket) => {
         socket.emit('admin_message', { message: '확성기 설정을 변경했습니다', loudSpeakerOn });
     });
 
-    // socket.on('create_room') // TODO: 방 만들기 -> 방에 초대할 유저 목록 보내야 함
+    socket.on('create_room', (data) => {
+        // TODO: data.users -> 방에 초대할 유저 목록
+
+        if (data.text) {
+            dataManage.setRoom(data.text, data.password);
+
+            dataManage.getSockets().forEach(tempSocket => {
+                tempSocket.join(data.text);
+                io.to(tempSocket.id).emit('admin_message', {
+                    message: `유저 '${dataManage.getUser(socket.id).name}'이(가) 방 '${data.text}'에 초대했습니다!`,
+                    room: data.text
+                });
+            });
+        } else {
+            socket.emit('admin_error', { message: `방 이름이 전달되지 않았습니다!` });
+        }
+    });
+
     // socket.on('update_room') // TODO: 방 정보 변경
     // socket.on('lock_room') // TODO: 방 비밀번호 설정
     // socket.on('delete_room') // TODO: 방 삭제하기
