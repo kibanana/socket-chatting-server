@@ -1,5 +1,6 @@
 let io = undefined;
 const userMap = {};
+const disableLoudSpeaker = {};
 
 const setIo = (newIo) => io = newIo;
 const getIo = () => io;
@@ -14,6 +15,10 @@ const unsetUser = (socketId) => {
 const getUser = (socketId) => userMap[socketId];
 const getUserNames = () => Object.values(userMap).map(user => user.name);
 
+const setDisableLoudSpeaker = (socketId) => disableLoudSpeaker[socketId] = true;
+const unsetDisableLoudSpeaker = (socketId) => delete disableLoudSpeaker[socketId];
+const getDisableLoudSpeakerKeys = () => Object.keys(disableLoudSpeaker);
+
 module.exports = {
     setIo,
     getIo,
@@ -21,5 +26,9 @@ module.exports = {
     setUser,
     unsetUser,
     getUser,
-    getUserNames
+    getUserNames,
+
+    setDisableLoudSpeaker,
+    unsetDisableLoudSpeaker,
+    getDisableLoudSpeakerKeys
 };

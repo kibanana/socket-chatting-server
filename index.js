@@ -38,6 +38,7 @@ io.on('connection', (socket) => {
             const user = dataManage.getUser(socket.id);
             socket.broadcast.emit('notice', { message: `유저 '${user.name}'이(가) '${data.text}'로 이름을 변경했습니다!` });
             socket.emit('admin_data', { name: data.text });
+            // io.to(socket.id).emit('admin_data', { name: data.text }); // Send to specific socket id
             dataManage.setUser(socket.id, { name: data.text });
         }
     });
@@ -46,9 +47,21 @@ io.on('connection', (socket) => {
         const user = dataManage.getUser(socket.id);
 
         socket.broadcast.emit('global_message', { user: user.name, message: data.text });
-    })
+    });
 
-    // socket.on('update_global_message_settings') // TODO: 확성기 설정 변경
+    socket.on('update_global_message_settings', () => {
+        let loudSpeakerOn = undefined;
+        
+        if (dataManage.getDisableLoudSpeakerKeys().includes(socket.id)) {
+            dataManage.unsetDisableLoudSpeaker(socket.id);
+            loudSpeakerOn = true;
+        } else {
+            dataManage.setDisableLoudSpeaker(socket.id);
+            loudSpeakerOn = false;
+        }
+
+        socket.emit('admin_message', { message: '확성기 설정을 변경했습니다', loudSpeakerOn });
+    });
 
     // socket.on('create_room') // TODO: 방 만들기 -> 방에 초대할 유저 목록 보내야 함
     // socket.on('update_room') // TODO: 방 정보 변경
