@@ -19,6 +19,9 @@ let userIndex = 1;
 
 io.on('connection', (socket) => {
     socket.on('disconnect', () => {
+
+        socket.broadcast.emit('notice', { message: `${dataManage.getUser(socket.id).name}이(가) 접속을 종료했습니다!` });
+        socket.broadcast.emit('admin_delete_data', { user: socket.id });
         dataManage.unsetUser(socket.id);
     });
 
@@ -26,10 +29,17 @@ io.on('connection', (socket) => {
         // const ipAddress = socket.handshake.address.replace(`::ffff:`, ``);
 
         const username = `유저${userIndex++}`;
-        socket.broadcast.emit('notice', { message: `${username}이(가) 서버에 접속했습니다!` });
-        socket.emit('admin_message', { message: `사용자 이름 '${username}'을(를) 부여받았습니다`, name: username });
-        dataManage.setUser(socket.id, { name: username });
         dataManage.setSocket(socket);
+        dataManage.setUser(socket.id, { name: username });
+
+        socket.broadcast.emit('notice', { message: `${username}이(가) 서버에 접속했습니다!` });
+        socket.broadcast.emit('admin_data', { userMap: { [socket.id]: dataManage.getUser(socket.id) } });
+        console.log()
+        socket.emit('admin_message', {
+            message: `사용자 이름 '${username}'을(를) 부여받았습니다`,
+            name: username,
+            userMap: dataManage.getUserMap()
+        });
     });
 
     socket.on('change_name', (data) => {
@@ -37,10 +47,13 @@ io.on('connection', (socket) => {
             socket.emit('admin_error', { message: `'${data.text}'은(는) 중복된 닉네임입니다` });
         } else {
             const user = dataManage.getUser(socket.id);
-            socket.broadcast.emit('notice', { message: `유저 '${user.name}'이(가) '${data.text}'로 이름을 변경했습니다!` });
+            dataManage.setUser(socket.id, { name: data.text });
+            socket.broadcast.emit('admin_message', {
+                message: `유저 '${user.name}'이(가) '${data.text}'로 이름을 변경했습니다!`,
+                userMap: { [socket.id]: dataManage.getUser(socket.id) } 
+            });
             socket.emit('admin_data', { name: data.text });
             // io.to(socket.id).emit('admin_data', { name: data.text }); // Send to specific socket id
-            dataManage.setUser(socket.id, { name: data.text });
         }
     });
 
@@ -69,17 +82,37 @@ io.on('connection', (socket) => {
     });
 
     socket.on('create_room', (data) => {
-        // TODO: data.users -> 방에 초대할 유저 목록
-
         if (data.text) {
             dataManage.setRoom(data.text, data.password);
 
-            dataManage.getSockets().forEach(tempSocket => {
-                tempSocket.join(data.text);
-                io.to(tempSocket.id).emit('admin_message', {
-                    message: `유저 '${dataManage.getUser(socket.id).name}'이(가) 방 '${data.text}'에 초대했습니다!`,
-                    room: data.text
+            const usernames = [];
+            socket.join(data.text);
+            console.log('dataManage.getUserMap()', dataManage.getUserMap());
+            if (data.arguments && Array.isArray(data.arguments) && data.arguments.length > 0) {
+                data.arguments.forEach(socketId => {
+                    usernames.push(dataManage.getUser(socketId).name);
+                    dataManage.getSocket(socketId).join(data.text);
                 });
+            } else {
+                const filteredSockets = dataManage.getSockets().filter(tempSocket => tempSocket.id !== socket.id);
+
+                filteredSockets.forEach(tempSocket => {
+                    console.log('tempSocket.id', tempSocket.id, dataManage.getUser(tempSocket.id));
+                    if (socket.id !== tempSocket.id) {
+                        usernames.push(dataManage.getUser(tempSocket.id).name);
+                        tempSocket.join(data.text);
+                    }
+                });
+            }
+
+            if (usernames.length <= 0) {
+                dataManage.unsetRoom(data.text);
+                return socket.emit('admin_error', { message: '방 만들기에 실패했습니다!' })
+            }
+
+            socket.to(data.text).emit('admin_message', {
+                message: `'${dataManage.getUser(socket.id).name}'이(가) '${usernames.join(', ')}'을(를) 방 '${data.text}'에 초대했습니다!`,
+                room: data.text
             });
         } else {
             socket.emit('admin_error', { message: `방 이름이 전달되지 않았습니다!` });
