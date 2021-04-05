@@ -92,7 +92,7 @@ io.on('connection', (socket) => {
     socket.on('create_room', (data) => {
         const socketId = socket.id;
         if (data.text) {
-            dataManage.setRoom(data.text, data.password);
+            dataManage.setRoom(data.text, data.password, socketId);
 
             const usernames = [];
             socket.join(data.text);
@@ -106,8 +106,11 @@ io.on('connection', (socket) => {
 
                 filteredSockets.forEach(tempSocket => {
                     if (socketId !== tempSocket.id) {
-                        usernames.push(dataManage.getUser(tempSocket.id).name);
-                        tempSocket.join(data.text);
+                        const user = dataManage.getUser(tempSocket.id);
+                        if (user) {
+                            usernames.push(user.name);
+                            tempSocket.join(data.text);
+                        }
                     }
                 });
             }
@@ -139,14 +142,27 @@ io.on('connection', (socket) => {
         }
     });
 
-    // socket.on('update_room') // TODO: 방 정보 변경
+    // socket.on('update_room_password') // TODO: 방 정보 변경
     // socket.on('lock_room') // TODO: 방 비밀번호 설정
     // socket.on('delete_room') // TODO: 방 삭제하기
 
     // socket.on('get_room_list') // TODO: 모든 방 정보 가져오기
     // socket.on('get_room_info') // TODO: 방 정보 가져오기(현재 활동중인 유저 정보 포함)
     // socket.on('join_room') // TODO: 방에 입장하기 -> 잠겨있을 때에는 비밀번호 보내야 함
-    // socket.on('leave_room') // TODO: 방에서 나가기
+    // socket.on('') // TODO: 방에서 강퇴시키기
+    socket.on('leave_room', (data) => {
+        const socketId = socket.id;
+
+        if (data.room) {
+            socket.leave(data.text);
+
+            socket.to(data.room).emit('admin_message', {
+                message: `'${dataManage.getUser(socketId).name}'가 방에서 나갔습니다.`
+            });
+        } else {
+            socket.emit('admin_error', { message: `정상적으로 방에서 나갈 수 없습니다!` });
+        }
+    });
     // socket.on('bookmark_room') // TODO: 특정 방 즐겨찾기 목록에 추가
 
     // socket.on('invite_friend') // TODO: 내가 있는 방에 친구 초대하기(비밀번호가 있어도 없는 것처럼 동작해야 함)

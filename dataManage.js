@@ -24,8 +24,13 @@ const getUserMap = () => userMap;
 const getUser = (socketId) => userMap[socketId];
 const getUserNames = () => Object.values(userMap).map(user => user.name);
 
-const setRoom = (key, password) => roomMap[key] = password
+const setRoom = (key, password, users) => roomMap[key] = { password, users };
 const unsetRoom = (key) => delete roomMap[key];
+
+const getRoomPassword = (key) => roomMap[key].password;
+const getRoomUsers = (key) => roomMap[key].users;
+
+const deleteRoomUser = (key, idx) => roomMap[key].users.splice(idx, 1);
 
 const setDisableLoudSpeaker = (socketId) => disableLoudSpeaker[socketId] = true;
 const unsetDisableLoudSpeaker = (socketId) => delete disableLoudSpeaker[socketId];
@@ -48,6 +53,11 @@ module.exports = {
 
     setRoom,
     unsetRoom,
+
+    getRoomPassword,
+    getRoomUsers,
+
+    deleteRoomUser,
 
     setDisableLoudSpeaker,
     unsetDisableLoudSpeaker,
