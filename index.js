@@ -46,8 +46,7 @@ io.on('connection', (socket) => {
                 }
 
                 socket.broadcast.emit('admin_data', {
-                    room: roomId,
-                    roomUsers: dataManage.getRoom(roomId).users
+                    roomUsers: { room: roomId, users: dataManage.getRoom(roomId).users }
                 });
                 socket.to(roomId).emit('admin_message', {
                     message: `'${dataManage.getUser(socketId).name}'가 방에서 나갔습니다. ${additionalMessage}`
@@ -58,12 +57,12 @@ io.on('connection', (socket) => {
             }
         }
 
-        dataManage.unsetUser(socketId);
-
         socket.broadcast.emit('notice', {
             message: `${dataManage.getUser(socketId).name}이(가) 접속을 종료했습니다!`
         });
         socket.broadcast.emit('admin_delete_data', { user: socketId });
+
+        dataManage.unsetUser(socketId);
     });
 
     socket.on('register', () => {
@@ -75,12 +74,13 @@ io.on('connection', (socket) => {
 
         socket.broadcast.emit('notice', { message: `'${userName}'이(가) 서버에 접속했습니다!` });
         socket.broadcast.emit('admin_data', { userMap: { [socketId]: dataManage.getUser(socketId) } });
-        socket.emit('admin_message', { message: `사용자 이름 '${userName}'을(를) 부여받았습니다` });
         socket.emit('admin_data', {
+            id: socket.id,
             name: userName,
             userMap: dataManage.getUserMap(),
             roomMap: dataManage.getRoomMap()
         });
+        socket.emit('admin_message', { message: `사용자 이름 '${userName}'을(를) 부여받았습니다` });
     });
 
     socket.on('change_name', (data) => {
@@ -94,11 +94,11 @@ io.on('connection', (socket) => {
 
             dataManage.setUser(socketId, { name: nickname });
 
-            socket.broadcast.emit('admin_message', {
-                message: `유저 '${oldNickname}'이(가) '${nickname}'로 이름을 변경했습니다!`
-            });
             socket.broadcast.emit('admin_data', {
                 userMap: { [socketId]: dataManage.getUser(socketId) } 
+            });
+            socket.broadcast.emit('admin_message', {
+                message: `유저 '${oldNickname}'이(가) '${nickname}'로 이름을 변경했습니다!`
             });
             socket.emit('admin_data', { name: nickname });
             // io.to(socket.id).emit('admin_data', { name: nickname }); // Send to specific socket id
@@ -131,8 +131,8 @@ io.on('connection', (socket) => {
             loudSpeakerOn = false;
         }
 
-        socket.emit('admin_message', { message: '확성기 설정을 변경했습니다' });
         socket.emit('admin_data', { loudSpeakerOn });
+        socket.emit('admin_message', { message: '확성기 설정을 변경했습니다' });
     });
 
     socket.on('create_room', (data) => {
@@ -160,11 +160,11 @@ io.on('connection', (socket) => {
 
             dataManage.setRoom(roomId, { password, users: userIds, createdAt: new Date() });
 
-            socket.broadcast.emit('admin_data', { roomMap: { [roomId]: dataManage.getRoom(roomId) } })
+            io.emit('admin_data', { roomMap: { [roomId]: dataManage.getRoom(roomId) } });
+            io.in(roomId).emit('admin_data', { room: roomId });
             io.in(roomId).emit('admin_message', {
                 message: `'${dataManage.getUser(socketId).name}'이(가) '${userNames.join(', ')}'을(를) '${roomId}'에 초대했습니다!`
             });
-            io.in(roomId).emit('admin_data', { room: roomId });
         } else {
             socket.emit('admin_error', { message: `방을 만들 수 없습니다!` });
         }
@@ -188,12 +188,11 @@ io.on('connection', (socket) => {
         socket.join(roomId);
         dataManage.addUserToRoom(roomId, socketId);
 
-        socket.broadcast.emit('admin_data', {
-            room: roomId,
-            roomUsers: dataManage.getRoom(roomId).users
+        io.emit('admin_data', {
+            roomUsers: { room: roomId, users: dataManage.getRoom(roomId).users }
         });
-        io.in(roomId).emit('admin_message', { message: `'${dataManage.getUser(socketId).name}'이(가) 방에 들어왔습니다!` });
         io.in(roomId).emit('admin_data', { room: roomId });
+        io.in(roomId).emit('admin_message', { message: `'${dataManage.getUser(socketId).name}'이(가) 방에 들어왔습니다!` });
     }); // TODO: 방에 입장하기 -> 잠겨있을 때에는 비밀번호 보내야 함
 
     socket.on('leave_room', (data) => {
@@ -206,7 +205,7 @@ io.on('connection', (socket) => {
 
             const users = dataManage.getRoom(roomId).users;
             if (users.length <= 0) {
-                socket.broadcast.emit('admin_delete_data', { room: roomId });
+                io.emit('admin_delete_data', { room: roomId });
                 return socket.emit('admin_message', { message: '방에 남은 사람이 없어 방이 삭제되었습니다!' });
             }
             
@@ -215,9 +214,8 @@ io.on('connection', (socket) => {
                 additionalMessage += `기존 방 주인이었던 '${dataManage.getUser(socketId).name}'이(가) 나갔으므로 '${dataManage.getUser(users[0]).name}'이(가) 방 주인이 됩니다.`;
             }
 
-            socket.broadcast.emit('admin_data', {
-                room: roomId,
-                roomUsers: dataManage.getRoom(roomId).users
+            io.emit('admin_data', {
+                roomUsers: { room: roomId, users: dataManage.getRoom(roomId).users }
             });
             socket.to(roomId).emit('admin_message', {
                 message: `'${dataManage.getUser(socketId).name}'가 방에서 나갔습니다. ${additionalMessage}`
@@ -233,6 +231,8 @@ io.on('connection', (socket) => {
 
     // socket.on('') // TODO: 방에서 강퇴시키기(마스터 권한 필요)
     // socker.on('') // TODO: 방 폭파(마스터 권한 필요)
+
+    // socket.on('') // TOOD: 권한 넘기기(마스터 권한 필요)
 
     // socket.on('set_room_notice') // 방 공지 설정(마스터 권한 필요)
     // socket.on('set_room_color') // 방 대표색 설정(마스터 권한 필요)
