@@ -90,14 +90,17 @@ io.on('connection', (socket) => {
     });
 
     socket.on('create_room', (data) => {
-        const socketId = socket.id;
         if (data.text) {
-            dataManage.setRoom(data.text, data.password, socketId);
-
+            const userIds = [socket.id];
             const usernames = [];
+
             socket.join(data.text);
+            
+            userIds.push(socket.id);
+
             if (data.arguments && Array.isArray(data.arguments) && data.arguments.length > 0) {
                 data.arguments.forEach(socketId => {
+                    userIds.push(socketId);
                     usernames.push(dataManage.getUser(socketId).name);
                     dataManage.getSocket(socketId).join(data.text);
                 });
@@ -108,6 +111,7 @@ io.on('connection', (socket) => {
                     if (socketId !== tempSocket.id) {
                         const user = dataManage.getUser(tempSocket.id);
                         if (user) {
+                            userIds.push(tempSocket.id);
                             usernames.push(user.name);
                             tempSocket.join(data.text);
                         }
@@ -116,12 +120,13 @@ io.on('connection', (socket) => {
             }
 
             if (usernames.length <= 0) {
-                dataManage.unsetRoom(data.text);
                 return socket.emit('admin_error', { message: '방 만들기에 실패했습니다!' })
             }
 
+            dataManage.setRoom(data.text, data.password, userIds);
+
             io.in(data.text).emit('admin_message', {
-                message: `'${dataManage.getUser(socketId).name}'이(가) '${usernames.join(', ')}'을(를) '${data.text}'에 초대했습니다!`,
+                message: `'${dataManage.getUser(socket.id).name}'이(가) '${usernames.join(', ')}'을(를) '${data.text}'에 초대했습니다!`,
                 room: data.text
             });
         } else {
@@ -142,33 +147,48 @@ io.on('connection', (socket) => {
         }
     });
 
-    // socket.on('update_room_password') // TODO: 방 정보 변경
     // socket.on('lock_room') // TODO: 방 비밀번호 설정
+    // socket.on('update_room_password') // TODO: 방 비밀번호 변경
     // socket.on('delete_room') // TODO: 방 삭제하기
 
     // socket.on('get_room_list') // TODO: 모든 방 정보 가져오기
     // socket.on('get_room_info') // TODO: 방 정보 가져오기(현재 활동중인 유저 정보 포함)
     // socket.on('join_room') // TODO: 방에 입장하기 -> 잠겨있을 때에는 비밀번호 보내야 함
     // socket.on('') // TODO: 방에서 강퇴시키기
+    // socker.on('') // TODO: 방 폭파
+
+    // socket.on('set_room_notice') // 방 공지 설정(마스터 권한 필요)
+    // socket.on('set_room_color') // 방 대표색 설정(마스터 권한 필요)
+
     socket.on('leave_room', (data) => {
         const socketId = socket.id;
-
+        
         if (data.room) {
-            socket.leave(data.text);
+            const users = dataManage.getRoomUsers(data.room);
+            const idx = users.indexOf(socketId);
+            dataManage.deleteRoomUser(data.room, idx);
+            let additionalMessage = '';
+
+            if (users.length < 1) {
+                return socket.emit('admin_message', {
+                    message: '방에 남은 사람이 없어 방이 삭제되었습니다!'
+                });
+            }
 
             socket.to(data.room).emit('admin_message', {
-                message: `'${dataManage.getUser(socketId).name}'가 방에서 나갔습니다.`
+                message: `'${dataManage.getUser(socketId).name}'가 방에서 나갔습니다. ${additionalMessage}`
             });
+
+            if (idx === 0) {
+                additionalMessage += `기존 방 주인이었던 '${dataManage.getUser(socket.id).name}'가 나갔으므로 마스터 권한이 '${users[1].name}'에게 넘어갑니다.`;
+            }
+
+            socket.leave(data.room);
         } else {
             socket.emit('admin_error', { message: `정상적으로 방에서 나갈 수 없습니다!` });
         }
     });
-    // socket.on('bookmark_room') // TODO: 특정 방 즐겨찾기 목록에 추가
-
     // socket.on('invite_friend') // TODO: 내가 있는 방에 친구 초대하기(비밀번호가 있어도 없는 것처럼 동작해야 함)
-
-    // socket.on('set_room_notice') // 방 공지 설정(마스터 권한 필요)
-    // socket.on('set_room_color') // 방 대표색 설정(마스터 권한 필요)
 
     // socket.on('update_global_user') // TODO: 현재 id 없이 친구추가할 수 있는 유저(광장 개념)
     // socket.on('update_global_user_settings') // TODO: 다른 유저들이 id 없이 나를 친구추가할 수 있는가? yes/no
