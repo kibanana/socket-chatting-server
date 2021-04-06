@@ -23,26 +23,61 @@ let userIndex = 1;
 io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         const socketId = socket.id;
+        
+        const roomMap = dataManage.getRoomMap();
+        const roomMapKeys = Object.keys(roomMap);
 
-        socket.broadcast.emit('notice', { message: `${dataManage.getUser(socketId).name}이(가) 접속을 종료했습니다!` });
-        socket.broadcast.emit('admin_delete_data', { user: socketId });
-        // TODO: 방에서 나가기 처리
+        for (let i = 0; i < roomMapKeys.length; i++) {
+            if (roomMap[roomMapKeys[i]].users.filter(user => user === socketId).length > 0) {
+                const roomId = roomMapKeys[i];
+
+                socket.leave(roomId);
+                dataManage.deleteUserFromRoom(roomId, socketId);
+
+                const users = dataManage.getRoom(roomId).users;
+                if (users.length <= 0) {
+                    socket.broadcast.emit('admin_delete_data', { room: roomId });
+                    return socket.emit('admin_message', { message: '방에 남은 사람이 없어 방이 삭제되었습니다!' });
+                }
+                
+                let additionalMessage = '';
+                if (users.indexOf(socketId) === 0) {
+                    additionalMessage += `기존 방 주인이었던 '${dataManage.getUser(socketId).name}'이(가) 나갔으므로 '${dataManage.getUser(users[0]).name}'이(가) 방 주인이 됩니다.`;
+                }
+
+                socket.broadcast.emit('admin_data', {
+                    room: roomId,
+                    roomUsers: dataManage.getRoom(roomId).users
+                });
+                socket.to(roomId).emit('admin_message', {
+                    message: `'${dataManage.getUser(socketId).name}'가 방에서 나갔습니다. ${additionalMessage}`
+                });
+                socket.emit('admin_message', { message: '방에서 나왔습니다.'});
+
+                break
+            }
+        }
+
         dataManage.unsetUser(socketId);
+
+        socket.broadcast.emit('notice', {
+            message: `${dataManage.getUser(socketId).name}이(가) 접속을 종료했습니다!`
+        });
+        socket.broadcast.emit('admin_delete_data', { user: socketId });
     });
 
     socket.on('register', () => {
         const socketId = socket.id;
-        // const ipAddress = socket.handshake.address.replace(`::ffff:`, ``);
+        const userName = `유저${userIndex++}`;
 
-        const username = `유저${userIndex++}`;
         dataManage.setSocket(socket);
-        dataManage.setUser(socketId, { name: username, createdAt: new Date() });
+        dataManage.setUser(socketId, { name: userName, createdAt: new Date() });
 
-        socket.broadcast.emit('notice', { message: `'${username}'이(가) 서버에 접속했습니다!` });
+        socket.broadcast.emit('notice', { message: `'${userName}'이(가) 서버에 접속했습니다!` });
         socket.broadcast.emit('admin_data', { userMap: { [socketId]: dataManage.getUser(socketId) } });
         socket.emit('admin_message', {
-            message: `사용자 이름 '${username}'을(를) 부여받았습니다`,
-            name: username,
+            message: `사용자 이름 '${userName}'을(를) 부여받았습니다`,
+            name: userName,
             userMap: dataManage.getUserMap(),
             roomMap: dataManage.getRoomMap()
         });
@@ -50,33 +85,39 @@ io.on('connection', (socket) => {
 
     socket.on('change_name', (data) => {
         const socketId = socket.id;
+        const { text: nickname } = data;
 
-        if (dataManage.getUserNames().includes(data.text)) {
-            socket.emit('admin_error', { message: `'${data.text}'은(는) 중복된 닉네임입니다` });
+        if (dataManage.getUserNames().includes(nickname)) {
+            socket.emit('admin_error', { message: `'${nickname}'은(는) 중복된 닉네임입니다` });
         } else {
-            const user = dataManage.getUser(socketId);
-            dataManage.setUser(socketId, { name: data.text });
+            const oldNickname = dataManage.getUser(socketId).name;
+
+            dataManage.setUser(socketId, { name: nickname });
+
             socket.broadcast.emit('admin_message', {
-                message: `유저 '${user.name}'이(가) '${data.text}'로 이름을 변경했습니다!`,
+                message: `유저 '${oldNickname}'이(가) '${nickname}'로 이름을 변경했습니다!`,
                 userMap: { [socketId]: dataManage.getUser(socketId) } 
             });
-            socket.emit('admin_data', { name: data.text });
-            // io.to(socket.id).emit('admin_data', { name: data.text }); // Send to specific socket id
+            socket.emit('admin_data', { name: nickname });
+            // io.to(socket.id).emit('admin_data', { name: nickname }); // Send to specific socket id
         }
     });
 
-    socket.on('global_message', (data) => {
-        dataManage.getSocketIds().forEach(socketId => {
-            if (!dataManage.getDisableLoudSpeakerKeys().includes(socketId)) {
-                io.to(socketId).emit('global_message', {
-                    user: dataManage.getUser(socket.id).name,
-                    message: data.text
+    socket.on('load_speaker', (data) => {
+        const socketId = socket.id;
+        const { text: message } = data;
+
+        dataManage.getUserKeys().forEach(tempSocketId => {
+            if (!dataManage.getDisableLoudSpeakerKeys().includes(tempSocketId)) {
+                io.to(tempSocketId).emit('global_message', {
+                    user: dataManage.getUser(socketId).name,
+                    message
                 });
             }
         });
     });
 
-    socket.on('update_global_message_settings', () => {
+    socket.on('update_loud_speaker_settings', () => {
         const socketId = socket.id;
         let loudSpeakerOn = undefined;
         
@@ -92,134 +133,108 @@ io.on('connection', (socket) => {
     });
 
     socket.on('create_room', (data) => {
-        if (data.text) {
-            const usernames = [];
+        const socketId = socket.id;
+        const { text: roomId, arguments: invitedUsers, password } = data;
 
-            socket.join(data.text);
-            
-            userIds.push(socket.id);
+        if (roomId && invitedUsers && Array.isArray(invitedUsers) && invitedUsers.length > 0) {
+            const userIds = [socketId];
+            const userNames = [];
 
-            if (data.arguments && Array.isArray(data.arguments) && data.arguments.length > 0) {
-                data.arguments.forEach(socketId => {
-                    userIds.push(socketId);
-                    usernames.push(dataManage.getUser(socketId).name);
-                    dataManage.getSocket(socketId).join(data.text);
-                });
-            } else {
-                const filteredSockets = dataManage.getSockets().filter(tempSocket => tempSocket.id !== socket.id);
-                filteredSockets.forEach(tempSocket => {
-                    if (socketId !== tempSocket.id) {
-                        const user = dataManage.getUser(tempSocket.id);
-                        if (user) {
-                            userIds.push(tempSocket.id);
-                            usernames.push(user.name);
-                            tempSocket.join(data.text);
-                        }
-                    }
-                });
-            }
+            socket.join(roomId);
 
-            if (usernames.length <= 0) {
+            invitedUsers.forEach(tempSocketId => {
+                const user = dataManage.getUser(tempSocketId);
+                if (user) {
+                    dataManage.getSocket(tempSocketId).join(roomId);
+                    userIds.push(tempSocketId);
+                    userNames.push(user.name);
+                }
+            });
+
+            if (userNames.length <= 0) {
                 return socket.emit('admin_error', { message: '방 만들기에 실패했습니다!' })
             }
 
-            const userIds = [socket.id];
-            dataManage.setRoom(data.text, { password: data.password, users: [socket.id], createdAt: new Date() });
+            dataManage.setRoom(roomId, { password, users: userIds, createdAt: new Date() });
 
-            socket.broadcast.emit('admin_data', { roomMap: { [data.text]: dataManage.getRoom(data.text) } })
-            io.in(data.text).emit('admin_message', {
-                message: `'${dataManage.getUser(socket.id).name}'이(가) '${usernames.join(', ')}'을(를) '${data.text}'에 초대했습니다!`,
-                room: data.text
+            socket.broadcast.emit('admin_data', { roomMap: { [roomId]: dataManage.getRoom(roomId) } })
+            io.in(roomId).emit('admin_message', {
+                message: `'${dataManage.getUser(socketId).name}'이(가) '${userNames.join(', ')}'을(를) '${roomId}'에 초대했습니다!`,
+                room: roomId
             });
         } else {
-            socket.emit('admin_error', { message: `방 이름이 전달되지 않았습니다!` });
+            socket.emit('admin_error', { message: `방을 만들 수 없습니다!` });
         }
     });
 
     socket.on('send_message', (data) => {
         const socketId = socket.id;
+        const { text: message, room: roomId } = data;
 
-        if (data.text && data.room) {
-            io.in(data.room).emit('send_message', {
-                user: dataManage.getUser(socketId).name,
-                message: data.text
-            });
+        if (message && roomId) {
+            io.in(roomId).emit('send_message', { user: dataManage.getUser(socketId).name, message });
         } else {
             socket.emit('admin_error', { message: `빈 메시지가 전달되었습니다!` });
         }
     });
 
-    // socket.on('lock_room') // TODO: 방 비밀번호 설정
-    // socket.on('update_room_password') // TODO: 방 비밀번호 변경
-    // socket.on('delete_room') // TODO: 방 삭제하기
-
-    // socket.on('') // TODO: 방에서 강퇴시키기
-    // socker.on('') // TODO: 방 폭파
-
-    // socket.on('set_room_notice') // 방 공지 설정(마스터 권한 필요)
-    // socket.on('set_room_color') // 방 대표색 설정(마스터 권한 필요)
-
     socket.on('join_room', (data) => {
-        socket.join(data.room);
-        dataManage.addUserToRoom(data.room, socketId);
-        io.in(data.room).emit('admin_message', {
-            message: `'${dataManage.getUser(socketId).name}'이(가) 방에 들어왔습니다!`,
-            room: data.room
+        const socketId = socket.id;
+        const { room: roomId } = data;
+
+        socket.join(roomId);
+        dataManage.addUserToRoom(roomId, socketId);
+
+        socket.broadcast.emit('admin_data', {
+            room: roomId,
+            roomUsers: dataManage.getRoom(roomId).users
         });
-        socket.broadcast.emit('admin_data', { room: data.room, roomUser: dataManage.getRoomUsers(data.room) });
+        io.in(roomId).emit('admin_message', {
+            message: `'${dataManage.getUser(socketId).name}'이(가) 방에 들어왔습니다!`,
+            room: roomId
+        });
     }); // TODO: 방에 입장하기 -> 잠겨있을 때에는 비밀번호 보내야 함
 
     socket.on('leave_room', (data) => {
         const socketId = socket.id;
+        const { room: roomId } = data;
         
-        if (data.room) {
-            const users = dataManage.getRoomUsers(data.room);
-            const idx = users.indexOf(socketId);
-            socket.leave(data.room);
-            dataManage.deleteUserFromRoom(data.room, socketId);
-            let additionalMessage = '';
+        if (roomId) {
+            socket.leave(roomId);
+            dataManage.deleteUserFromRoom(roomId, socketId);
 
-            if (users.length <= 1) {
-                return socket.emit('admin_message', {
-                    message: '방에 남은 사람이 없어 방이 삭제되었습니다!'
-                });
+            const users = dataManage.getRoom(roomId).users;
+            if (users.length <= 0) {
+                socket.broadcast.emit('admin_delete_data', { room: roomId });
+                return socket.emit('admin_message', { message: '방에 남은 사람이 없어 방이 삭제되었습니다!' });
+            }
+            
+            let additionalMessage = '';
+            if (users.indexOf(socketId) === 0) {
+                additionalMessage += `기존 방 주인이었던 '${dataManage.getUser(socketId).name}'이(가) 나갔으므로 '${dataManage.getUser(users[0]).name}'이(가) 방 주인이 됩니다.`;
             }
 
-            socket.emit('admin_message', {
-                message: '방에서 나왔습니다'
+            socket.broadcast.emit('admin_data', {
+                room: roomId,
+                roomUsers: dataManage.getRoom(roomId).users
             });
-            socket.to(data.room).emit('admin_message', {
+            socket.to(roomId).emit('admin_message', {
                 message: `'${dataManage.getUser(socketId).name}'가 방에서 나갔습니다. ${additionalMessage}`
             });
-
-            if (idx === 0) {
-                additionalMessage += `기존 방 주인이었던 '${dataManage.getUser(socket.id).name}'가 나갔으므로 마스터 권한이 '${users[1].name}'에게 넘어갑니다.`;
-            }
-
-            socket.leave(data.room);
-            
-            const users = dataManage.getRoomUsers;
-            if (users.length <= 0) {
-                socket.broadcast.emit('admin_delete_data', { room: data.room });
-            } else {
-                socket.broadcast.emit('admin_data', { room: data.room, roomUser: dataManage.getRoomUsers(data.text) });
-            }
+            socket.emit('admin_message', { message: '방에서 나왔습니다.'});
         } else {
             socket.emit('admin_error', { message: `정상적으로 방에서 나갈 수 없습니다!` });
         }
     });
 
-    // socket.on('bookmark_room') // TODO: 특정 방 즐겨찾기 목록에 추가
+    // socket.on('lock_room') // TODO: 방 비밀번호 설정
+    // socket.on('update_room_password') // TODO: 방 비밀번호 변경
+
+    // socket.on('') // TODO: 방에서 강퇴시키기(마스터 권한 필요)
+    // socker.on('') // TODO: 방 폭파(마스터 권한 필요)
+
+    // socket.on('set_room_notice') // 방 공지 설정(마스터 권한 필요)
+    // socket.on('set_room_color') // 방 대표색 설정(마스터 권한 필요)
 
     // socket.on('invite_friend') // TODO: 내가 있는 방에 친구 초대하기(비밀번호가 있어도 없는 것처럼 동작해야 함)
-
-    // socket.on('update_global_user') // TODO: 현재 id 없이 친구추가할 수 있는 유저(광장 개념)
-    // socket.on('update_global_user_settings') // TODO: 다른 유저들이 id 없이 나를 친구추가할 수 있는가? yes/no
-
-    // socket.on('get_friend_list') // TODO: 모든 친구 정보 가져오기
-    // socket.on('get_user_info') // TODO: 특정 친구 정보 가져오기
-    // socket.on('add_friend') // TODO: 친구추가(양방향)
-    // socket.on('delete_friend') // TODO: 친구삭제(양방향) -> 예전에 친구관계였지만 지금은 친구삭제된 것 명시
-
-    // socket.on('switch_all_alarm') // TODO: 전체 방(광장) 알림 설정 변경
 });
