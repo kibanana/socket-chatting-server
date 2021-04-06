@@ -32,10 +32,10 @@ io.on('connection', (socket) => {
                 const roomId = roomMapKeys[i];
 
                 socket.leave(roomId);
-                dataManage.deleteUserFromRoom(roomId, socketId);
 
                 const users = dataManage.getRoom(roomId).users;
                 if (users.length <= 0) {
+                    dataManage.unsetRoom(roomId);
                     socket.broadcast.emit('admin_delete_data', { room: roomId });
                     return socket.emit('admin_message', { message: '방에 남은 사람이 없어 방이 삭제되었습니다!' });
                 }
@@ -44,6 +44,8 @@ io.on('connection', (socket) => {
                 if (users.indexOf(socketId) === 0) {
                     additionalMessage += `기존 방 주인이었던 '${dataManage.getUser(socketId).name}'이(가) 나갔으므로 '${dataManage.getUser(users[0]).name}'이(가) 방 주인이 됩니다.`;
                 }
+
+                dataManage.deleteUserFromRoom(roomId, socketId);
 
                 socket.broadcast.emit('admin_data', {
                     roomUsers: { room: roomId, users: dataManage.getRoom(roomId).users }
@@ -105,13 +107,13 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('load_speaker', (data) => {
+    socket.on('loud_speaker', (data) => {
         const socketId = socket.id;
         const { text: message } = data;
 
         dataManage.getUserKeys().forEach(tempSocketId => {
             if (!dataManage.getDisableLoudSpeakerKeys().includes(tempSocketId)) {
-                io.to(tempSocketId).emit('global_message', {
+                io.to(tempSocketId).emit('loud_speaker', {
                     user: dataManage.getUser(socketId).name,
                     message
                 });
@@ -201,10 +203,10 @@ io.on('connection', (socket) => {
         
         if (roomId) {
             socket.leave(roomId);
-            dataManage.deleteUserFromRoom(roomId, socketId);
 
             const users = dataManage.getRoom(roomId).users;
             if (users.length <= 0) {
+                dataManage.unsetRoom(roomId);
                 io.emit('admin_delete_data', { room: roomId });
                 return socket.emit('admin_message', { message: '방에 남은 사람이 없어 방이 삭제되었습니다!' });
             }
@@ -213,6 +215,8 @@ io.on('connection', (socket) => {
             if (users.indexOf(socketId) === 0) {
                 additionalMessage += `기존 방 주인이었던 '${dataManage.getUser(socketId).name}'이(가) 나갔으므로 '${dataManage.getUser(users[0]).name}'이(가) 방 주인이 됩니다.`;
             }
+
+            dataManage.deleteUserFromRoom(roomId, socketId);
 
             io.emit('admin_data', {
                 roomUsers: { room: roomId, users: dataManage.getRoom(roomId).users }
