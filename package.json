@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "DEBUG=socket.io:server node index.js",
+    "start": "DEBUG=socket.io:server pm2 start index.js -i max --name 'socket'",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -21,6 +21,10 @@
   "dependencies": {
     "express": "^4.17.1",
     "http": "0.0.1-security",
-    "socket.io": "^4.0.1"
+    "mongodb": "^3.6.5",
+    "mongoose": "^5.12.3",
+    "pm2": "^4.5.6",
+    "socket.io": "^4.0.1",
+    "socket.io-redis": "^6.1.0"
   }
 }
