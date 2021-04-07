@@ -51,7 +51,7 @@ const isDuplicatedName = async (params) => {
 const isActiveDuplicatedName = async (params) => {
     const { name } = params;
     return (await userColl.countDocuments({ name, active: true })) > 0;
-}
+};
 
 const setDisabledLoudSpeaker = (params) => {
     const { _id, value } = params;
@@ -92,9 +92,18 @@ const getRoomItem = (params) => {
     return roomColl.findOne({ _id: new ObjectId(_id) });
 };
 
-const updateAllUserInactivated = () => {
+const getRoomByUser = (params) => {
+    const { userId } = params;
+    return roomColl.findOne({ users: { $elemMatch: userId } });
+};
+
+const updateAllUsersInactivated = () => {
     return userColl.updateMany({}, { $set: { active: false } });
-}
+};
+
+const deleteAllRooms = () => {
+    return roomColl.deleteMany();
+};
 
 module.exports = {
     createUser,
@@ -116,6 +125,8 @@ module.exports = {
     deleteUserFromRoom,
     getRoomList,
     getRoomItem,
+    getRoomByUser,
 
-    updateAllUserInactivated
+    updateAllUsersInactivated,
+    deleteAllRooms
 };

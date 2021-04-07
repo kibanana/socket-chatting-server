@@ -33,37 +33,34 @@ io.on('connection', (socket) => {
         const socketId = socket.id;
         const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
         const roomList = await dbManager.getRoomList();
+        const room = await dbManager.getRoomByUser({ userId: String(currentUser._id) });
 
-        for (let i = 0; i < roomList.length; i++) {
-            if (roomList[i].users.includes(String(currentUser._id))) {
-                const { _id: roomId, users } = roomList[i];
-                const idx = users.indexOf(String(currentUser._id));
+        if (room) {
+            const { _id: roomId, users } = roomList[i];
+            const idx = users.indexOf(String(currentUser._id));
 
-                socket.leave(roomId);
+            socket.leave(roomId);
 
-                if (users.length <= 1) {
-                    await dbManager.deleteRoom({ _id: roomId });
-                    return socket.broadcast.emit('admin_delete_data', { room: String(roomId) });
-                }
-                
-                let additionalMessage = '';
-                if (idx === 0) {
-                    additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(await dbManager.getUserItemById({ _id: users[1] })).name}'이(가) 방 주인이 됩니다.`;
-                }
-
-                await dbManager.deleteUserFromRoom({ _id: roomId, user: currentUser._id });
-                users.splice(idx, 1);
-
-                socket.broadcast.emit('admin_data', {
-                    roomUsers: { room: String(roomId), users }
-                });
-
-                socket.to(roomId).emit('admin_message', {
-                    message: `'${currentUser.name}'가 방에서 나갔습니다. ${additionalMessage}`
-                });
-                
-                break
+            if (users.length <= 1) {
+                await dbManager.deleteRoom({ _id: roomId });
+                return socket.broadcast.emit('admin_delete_data', { room: String(roomId) });
             }
+            
+            let additionalMessage = '';
+            if (idx === 0) {
+                additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(await dbManager.getUserItemById({ _id: users[1] })).name}'이(가) 방 주인이 됩니다.`;
+            }
+
+            await dbManager.deleteUserFromRoom({ _id: roomId, user: currentUser._id });
+            users.splice(idx, 1);
+
+            socket.broadcast.emit('admin_data', {
+                roomUsers: { room: String(roomId), users }
+            });
+
+            socket.to(roomId).emit('admin_message', {
+                message: `'${currentUser.name}'가 방에서 나갔습니다. ${additionalMessage}`
+            });
         }
 
         socket.broadcast.emit('notice', {
@@ -254,7 +251,9 @@ io.on('connection', (socket) => {
 process.stdin.resume(); //so the program will not close instantly
 
 const exitHandler = async (options, exitCode) => {
-    await dbManager.updateAllUserInactivated();
+    await dbManager.updateAllUsersInactivated();
+    await dbManager.deleteAllRooms();
+
     if (options.cleanup) console.log('clean');
     if (exitCode || exitCode === 0) {
         console.log(exitCode);
