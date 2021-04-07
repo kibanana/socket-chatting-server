@@ -43,7 +43,7 @@ io.on('connection', (socket) => {
 
                 if (users.length <= 1) {
                     await dbManager.deleteRoom({ _id: roomId });
-                    return socket.broadcast.emit('admin_delete_data', { room: roomId });
+                    return socket.broadcast.emit('admin_delete_data', { room: String(roomId) });
                 }
                 
                 let additionalMessage = '';
@@ -51,11 +51,11 @@ io.on('connection', (socket) => {
                     additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(await dbManager.getUserItemById({ _id: users[1] })).name}'이(가) 방 주인이 됩니다.`;
                 }
 
-                dbManager.deleteUserFromRoom({ _id: roomId, user: currentUser._id });
+                await dbManager.deleteUserFromRoom({ _id: roomId, user: currentUser._id });
                 users.splice(idx, 1);
 
                 socket.broadcast.emit('admin_data', {
-                    roomUsers: { room: roomId, users }
+                    roomUsers: { room: String(roomId), users }
                 });
 
                 socket.to(roomId).emit('admin_message', {
@@ -82,11 +82,16 @@ io.on('connection', (socket) => {
 
         socket.broadcast.emit('notice', { message: `'${name}'이(가) 서버에 접속했습니다!` });
         socket.broadcast.emit('admin_data', { userMap: { [String(currentUser._id)]: currentUser } });
+        const userMap = {};
+        const roomMap = {};
+        (await dbManager.getUserList()).forEach(user => userMap[String(user._id)] = user );
+        (await dbManager.getRoomList()).forEach(room => roomMap[String(room._id)] = room );
+        
         socket.emit('admin_data', {
             id: String(currentUser._id),
             name,
-            userMap: (await dbManager.getUserList()),
-            roomMap: (await dbManager.getRoomList())
+            userMap,
+            roomMap
         });
         socket.emit('admin_message', { message: `사용자 이름 '${name}'을(를) 부여받았습니다` });
     });
@@ -152,9 +157,10 @@ io.on('connection', (socket) => {
 
             const { insertedId: roomId } = await dbManager.createRoom({ title, users: userIds });
             socket.join(String(roomId));
+            const connectedSocketIds = Array.from(io.sockets.sockets.keys());
             users.forEach(user => {
-                if (io.sockets.connected.includes(user.lastSocketId)) {
-                    io.sockets.connected[user.lastSocketId].join(String(roomId));
+                if (connectedSocketIds.includes(user.lastSocketId)) {
+                    io.sockets.sockets.get(user.lastSocketId).join(String(roomId));
                 }
             });
 
@@ -163,7 +169,7 @@ io.on('connection', (socket) => {
             }
             
             io.emit('admin_data', { roomMap: { [String(roomId)]: (await dbManager.getRoomItem({ _id: roomId })) } });
-            io.in(String(roomId)).emit('admin_data', { room: roomId });
+            io.in(String(roomId)).emit('admin_data', { room: String(roomId) });
             io.in(String(roomId)).emit('admin_message', {
                 message: `'${currentUser.name}'이(가) '${userNames.join(', ')}'을(를) '${title}'에 초대했습니다!`
             });
@@ -178,7 +184,7 @@ io.on('connection', (socket) => {
         const { text: message, room: roomId } = data;
 
         if (message && roomId) {
-            io.in(roomId).emit('send_message', { user: currentUser.name, message });
+            io.in(String(roomId)).emit('send_message', { user: currentUser.name, message });
         } else {
             socket.emit('admin_error', { message: `빈 메시지가 전달되었습니다!` });
         }
@@ -192,7 +198,7 @@ io.on('connection', (socket) => {
         socket.join(roomId);
         await dbManager.addUserToRoom({ _id: roomId, user: String(currentUser._id) });
 
-        io.emit('admin_data', { roomUsers: { room: roomId, users: dbManager.getRoomItem({ _id: roomId }).users } });
+        io.emit('admin_data', { roomUsers: { room: roomId, users: (await dbManager.getRoomItem({ _id: roomId })).users } });
         io.in(roomId).emit('admin_data', { room: roomId });
         io.in(roomId).emit('admin_message', { message: `'${currentUser.name}'이(가) 방에 들어왔습니다!` });
     }); // TODO: 방에 입장하기 -> 잠겨있을 때에는 비밀번호 보내야 함
@@ -213,16 +219,15 @@ io.on('connection', (socket) => {
             }
             
             let additionalMessage = '';
-            if (room.users.indexOf(socketId) === 0) {
-                additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(dbManager.getUserItemById({ _id: room.users[1] })).name}'이(가) 방 주인이 됩니다.`;
+            const idx = room.users.indexOf(String(currentUser._id));
+            if (idx === 0) {
+                additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(await dbManager.getUserItemById({ _id: room.users[1] })).name}'이(가) 방 주인이 됩니다.`;
             }
 
-            dbManager.deleteUserFromRoom({ _id: roomId, user: currentUser._id });
-            room.users.splice(idx, 1)
+            await dbManager.deleteUserFromRoom({ _id: roomId, user: String(currentUser._id) });
+            room.users.splice(idx, 1);
 
-            io.emit('admin_data', {
-                roomUsers: { room: roomId, users: room.users }
-            });
+            io.emit('admin_data', { roomUsers: { room: roomId, users: room.users } });
             socket.to(roomId).emit('admin_message', {
                 message: `'${currentUser.name}'가 방에서 나갔습니다. ${additionalMessage}`
             });
@@ -245,3 +250,28 @@ io.on('connection', (socket) => {
 
     // socket.on('invite_friend') // TODO: 내가 있는 방에 친구 초대하기(비밀번호가 있어도 없는 것처럼 동작해야 함)
 });
+
+process.stdin.resume(); //so the program will not close instantly
+
+const exitHandler = async (options, exitCode) => {
+    await dbManager.updateAllUserInactivated();
+    if (options.cleanup) console.log('clean');
+    if (exitCode || exitCode === 0) {
+        console.log(exitCode);
+        process.exit();
+    }
+    if (options.exit) process.exit();
+};
+
+//do something when app is closing
+process.on('exit', exitHandler.bind(null, {}));
+
+//catches ctrl+c event
+process.on('SIGINT', exitHandler.bind(null, {}));
+
+// catches "kill pid" (for example: nodemon restart)
+process.on('SIGUSR1', exitHandler.bind(null, {}));
+process.on('SIGUSR2', exitHandler.bind(null, {}));
+
+//catches uncaught exceptions
+process.on('uncaughtException', exitHandler.bind(null, {}));
