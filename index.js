@@ -28,209 +28,203 @@ io.adapter(redis({ host: '127.0.0.1', port: 6379 }));
 
 dataManager.setIo(io);
 
-let userIndex = 1;
-
 io.on('connection', (socket) => {
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
         const socketId = socket.id;
-        
-        const roomMap = dataManager.getRoomMap();
-        const roomMapKeys = Object.keys(roomMap);
+        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
+        const roomList = await dbManager.getRoomList();
 
-        for (let i = 0; i < roomMapKeys.length; i++) {
-            if (roomMap[roomMapKeys[i]].users.filter(user => user === socketId).length > 0) {
-                const roomId = roomMapKeys[i];
+        for (let i = 0; i < roomList.length; i++) {
+            if (roomList[i].users.includes(String(currentUser._id))) {
+                const { _id: roomId, users } = roomList[i];
+                const idx = users.indexOf(String(currentUser._id));
 
                 socket.leave(roomId);
 
-                const users = dataManager.getRoom(roomId).users;
-                if (users.length <= 0) {
-                    dataManager.unsetRoom(roomId);
+                if (users.length <= 1) {
+                    await dbManager.deleteRoom({ _id: roomId });
                     return socket.broadcast.emit('admin_delete_data', { room: roomId });
                 }
                 
                 let additionalMessage = '';
-                if (users.indexOf(socketId) === 0) {
-                    additionalMessage += `기존 방 주인이었던 '${dataManager.getUser(socketId).name}'이(가) 나갔으므로 '${dataManager.getUser(users[0]).name}'이(가) 방 주인이 됩니다.`;
+                if (idx === 0) {
+                    additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(await dbManager.getUserItemById({ _id: users[1] })).name}'이(가) 방 주인이 됩니다.`;
                 }
 
-                dataManager.deleteUserFromRoom(roomId, socketId);
+                dbManager.deleteUserFromRoom({ _id: roomId, user: currentUser._id });
+                users.splice(idx, 1);
 
                 socket.broadcast.emit('admin_data', {
-                    roomUsers: { room: roomId, users: dataManager.getRoom(roomId).users }
-                });
-                socket.to(roomId).emit('admin_message', {
-                    message: `'${dataManager.getUser(socketId).name}'가 방에서 나갔습니다. ${additionalMessage}`
+                    roomUsers: { room: roomId, users }
                 });
 
+                socket.to(roomId).emit('admin_message', {
+                    message: `'${currentUser.name}'가 방에서 나갔습니다. ${additionalMessage}`
+                });
+                
                 break
             }
         }
 
         socket.broadcast.emit('notice', {
-            message: `${dataManager.getUser(socketId).name}이(가) 접속을 종료했습니다!`
+            message: `${currentUser.name}이(가) 접속을 종료했습니다!`
         });
-        socket.broadcast.emit('admin_delete_data', { user: socketId });
+        socket.broadcast.emit('admin_delete_data', { user: currentUser._id });  // TODO: inactivated 처리
 
-        dataManager.unsetUser(socketId);
+        dbManager.updateUserInactivated({ _id: currentUser._id });
     });
 
-    socket.on('register', () => {
+    socket.on('register', async (data) => {
         const socketId = socket.id;
-        const userName = `유저${userIndex++}`;
+        const name = (data.name && !(await dbManager.isActiveDuplicatedName({ name: data.name }))) ? data.name : `유저${Date.now()}`;
+        await dbManager.createUser({ lastSocketId: socketId, name });
+        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
 
-        dataManager.setSocket(socket);
-        dataManager.setUser(socketId, { name: userName, createdAt: new Date() });
-
-        socket.broadcast.emit('notice', { message: `'${userName}'이(가) 서버에 접속했습니다!` });
-        socket.broadcast.emit('admin_data', { userMap: { [socketId]: dataManager.getUser(socketId) } });
+        socket.broadcast.emit('notice', { message: `'${name}'이(가) 서버에 접속했습니다!` });
+        socket.broadcast.emit('admin_data', { userMap: { [String(currentUser._id)]: currentUser } });
         socket.emit('admin_data', {
-            id: socket.id,
-            name: userName,
-            userMap: dataManager.getUserMap(),
-            roomMap: dataManager.getRoomMap()
+            id: String(currentUser._id),
+            name,
+            userMap: (await dbManager.getUserList()),
+            roomMap: (await dbManager.getRoomList())
         });
-        socket.emit('admin_message', { message: `사용자 이름 '${userName}'을(를) 부여받았습니다` });
+        socket.emit('admin_message', { message: `사용자 이름 '${name}'을(를) 부여받았습니다` });
     });
 
-    socket.on('change_name', (data) => {
+    socket.on('change_name', async (data) => {
         const socketId = socket.id;
+        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
         const { text: nickname } = data;
 
-        if (dataManager.getUserNames().includes(nickname)) {
+        if (await dbManager.isDuplicatedName({ name: nickname })) {
             socket.emit('admin_error', { message: `'${nickname}'은(는) 중복된 닉네임입니다` });
         } else {
-            const oldNickname = dataManager.getUser(socketId).name;
-
-            dataManager.setUser(socketId, { name: nickname });
+            await dbManager.updateName({ _id: currentUser._id, name: nickname });
 
             socket.broadcast.emit('admin_data', {
-                userMap: { [socketId]: dataManager.getUser(socketId) } 
+                userMap: { [socketId]: { ...currentUser, name: nickname } } 
             });
             socket.broadcast.emit('admin_message', {
-                message: `유저 '${oldNickname}'이(가) '${nickname}'로 이름을 변경했습니다!`
+                message: `유저 '${currentUser.name}'이(가) '${nickname}'로 이름을 변경했습니다!`
             });
             socket.emit('admin_data', { name: nickname });
             // io.to(socket.id).emit('admin_data', { name: nickname }); // Send to specific socket id
         }
     });
 
-    socket.on('loud_speaker', (data) => {
+    socket.on('loud_speaker', async (data) => {
         const socketId = socket.id;
+        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
         const { text: message } = data;
 
-        dataManager.getUserKeys().forEach(tempSocketId => {
-            if (!dataManager.getDisableLoudSpeakerKeys().includes(tempSocketId)) {
-                io.to(tempSocketId).emit('loud_speaker', {
-                    user: dataManager.getUser(socketId).name,
-                    message
-                });
-            }
+        const notDisabledLoudSpeakerUserList = await dbManager.getNotDisabledLoudSpeakerUserList();
+        notDisabledLoudSpeakerUserList.forEach((user) => {
+            io.to(user.lastSocketId).emit('loud_speaker', {
+                user: currentUser.name,
+                message
+            });
         });
     });
 
-    socket.on('update_loud_speaker_settings', () => {
+    socket.on('update_loud_speaker_settings', async () => {
         const socketId = socket.id;
+        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
         let loudSpeakerOn = undefined;
-        
-        if (dataManager.getDisableLoudSpeakerKeys().includes(socketId)) {
-            dataManager.unsetDisableLoudSpeaker(socketId);
-            loudSpeakerOn = true;
-        } else {
-            dataManager.setDisableLoudSpeaker(socketId);
-            loudSpeakerOn = false;
-        }
+
+        if (currentUser.disabledLoudSpeaker) loudSpeakerOn = true;
+        else loudSpeakerOn = false;
+
+        await dbManager.setDisabledLoudSpeaker({ _id: currentUser._id, value: !loudSpeakerOn });
 
         socket.emit('admin_data', { loudSpeakerOn });
         socket.emit('admin_message', { message: '확성기 설정을 변경했습니다' });
     });
 
-    socket.on('create_room', (data) => {
+    socket.on('create_room', async (data) => {
         const socketId = socket.id;
-        const { text: roomId, arguments: invitedUsers, password } = data;
+        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
+        const { text: title, arguments: invitedUsers, password } = data;
 
-        if (roomId && invitedUsers && Array.isArray(invitedUsers) && invitedUsers.length > 0) {
-            const userIds = [socketId];
-            const userNames = [];
+        if (title && invitedUsers && Array.isArray(invitedUsers) && invitedUsers.length > 0) {
+            const users = await dbManager.getUserListByIds({ ids: invitedUsers });
+            const userIds = [String(currentUser._id), ...users.map(user => String(user._id))];
+            const userNames = [currentUser.name, ...users.map(user => user.name)];
 
-            socket.join(roomId);
-
-            invitedUsers.forEach(tempSocketId => {
-                const user = dataManager.getUser(tempSocketId);
-                if (user) {
-                    dataManager.getSocket(tempSocketId).join(roomId);
-                    userIds.push(tempSocketId);
-                    userNames.push(user.name);
+            const { insertedId: roomId } = await dbManager.createRoom({ title, users: userIds });
+            socket.join(String(roomId));
+            users.forEach(user => {
+                if (io.sockets.connected.includes(user.lastSocketId)) {
+                    io.sockets.connected[user.lastSocketId].join(String(roomId));
                 }
             });
 
-            if (userNames.length <= 0) {
-                return socket.emit('admin_error', { message: '방 만들기에 실패했습니다!' })
+            if (userIds.length <= 1) {
+                return socket.emit('admin_error', { message: '방 만들기에 실패했습니다!' });
             }
-
-            dataManager.setRoom(roomId, { password, users: userIds, createdAt: new Date() });
-
-            io.emit('admin_data', { roomMap: { [roomId]: dataManager.getRoom(roomId) } });
-            io.in(roomId).emit('admin_data', { room: roomId });
-            io.in(roomId).emit('admin_message', {
-                message: `'${dataManager.getUser(socketId).name}'이(가) '${userNames.join(', ')}'을(를) '${roomId}'에 초대했습니다!`
+            
+            io.emit('admin_data', { roomMap: { [String(roomId)]: (await dbManager.getRoomItem({ _id: roomId })) } });
+            io.in(String(roomId)).emit('admin_data', { room: roomId });
+            io.in(String(roomId)).emit('admin_message', {
+                message: `'${currentUser.name}'이(가) '${userNames.join(', ')}'을(를) '${title}'에 초대했습니다!`
             });
         } else {
             socket.emit('admin_error', { message: `방을 만들 수 없습니다!` });
         }
     });
 
-    socket.on('send_message', (data) => {
+    socket.on('send_message', async (data) => {
         const socketId = socket.id;
+        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
         const { text: message, room: roomId } = data;
 
         if (message && roomId) {
-            io.in(roomId).emit('send_message', { user: dataManager.getUser(socketId).name, message });
+            io.in(roomId).emit('send_message', { user: currentUser.name, message });
         } else {
             socket.emit('admin_error', { message: `빈 메시지가 전달되었습니다!` });
         }
     });
 
-    socket.on('join_room', (data) => {
+    socket.on('join_room', async (data) => {
         const socketId = socket.id;
+        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
         const { room: roomId } = data;
 
         socket.join(roomId);
-        dataManager.addUserToRoom(roomId, socketId);
+        await dbManager.addUserToRoom({ _id: roomId, user: String(currentUser._id) });
 
-        io.emit('admin_data', {
-            roomUsers: { room: roomId, users: dataManager.getRoom(roomId).users }
-        });
+        io.emit('admin_data', { roomUsers: { room: roomId, users: dbManager.getRoomItem({ _id: roomId }).users } });
         io.in(roomId).emit('admin_data', { room: roomId });
-        io.in(roomId).emit('admin_message', { message: `'${dataManager.getUser(socketId).name}'이(가) 방에 들어왔습니다!` });
+        io.in(roomId).emit('admin_message', { message: `'${currentUser.name}'이(가) 방에 들어왔습니다!` });
     }); // TODO: 방에 입장하기 -> 잠겨있을 때에는 비밀번호 보내야 함
 
-    socket.on('leave_room', (data) => {
+    socket.on('leave_room', async (data) => {
         const socketId = socket.id;
+        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
         const { room: roomId } = data;
         
         if (roomId) {
             socket.leave(roomId);
 
-            const users = dataManager.getRoom(roomId).users;
-            if (users.length <= 0) {
-                dataManager.unsetRoom(roomId);
+            const room = await dbManager.getRoomItem({ _id: roomId });
+            if (room.users.length <= 1) {
+                await dbManager.deleteRoom({ _id: roomId });
                 io.emit('admin_delete_data', { room: roomId });
                 return socket.emit('admin_message', { message: '방에 남은 사람이 없어 방이 삭제되었습니다!' });
             }
             
             let additionalMessage = '';
-            if (users.indexOf(socketId) === 0) {
-                additionalMessage += `기존 방 주인이었던 '${dataManager.getUser(socketId).name}'이(가) 나갔으므로 '${dataManager.getUser(users[0]).name}'이(가) 방 주인이 됩니다.`;
+            if (room.users.indexOf(socketId) === 0) {
+                additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(dbManager.getUserItemById({ _id: room.users[1] })).name}'이(가) 방 주인이 됩니다.`;
             }
 
-            dataManager.deleteUserFromRoom(roomId, socketId);
+            dbManager.deleteUserFromRoom({ _id: roomId, user: currentUser._id });
+            room.users.splice(idx, 1)
 
             io.emit('admin_data', {
-                roomUsers: { room: roomId, users: dataManager.getRoom(roomId).users }
+                roomUsers: { room: roomId, users: room.users }
             });
             socket.to(roomId).emit('admin_message', {
-                message: `'${dataManager.getUser(socketId).name}'가 방에서 나갔습니다. ${additionalMessage}`
+                message: `'${currentUser.name}'가 방에서 나갔습니다. ${additionalMessage}`
             });
             socket.emit('admin_message', { message: '방에서 나왔습니다.'});
         } else {

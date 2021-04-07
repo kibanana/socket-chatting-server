@@ -7,33 +7,59 @@ const roomColl = connection.collection('rooms');
 // users
 const createUser = (params) => {
     const { name, lastSocketId } = params;
-    return userColl.insertOne({ name, lastSocketId, createdAt: new Date(), updatedAt: new Date(), lastLoginDate: new Date() });
+    return userColl.updateOne({ name }, { $set: { lastSocketId, lastLoginDate: new Date(), active: true } }, { upsert: true });
+};
+
+const updateName = (params) => {
+    const { _id, name } = params;
+    return userColl.updateOne({ _id: ObjectId(_id) }, { $set: { name, updatedAt: new Date() } });
+};
+
+const updateUserInactivated = (params) => {
+    const { _id } = params;
+    return userColl.updateOne({ _id: ObjectId(_id) }, { $set: { active: false, updatedAt: new Date() }});
+};
+
+const getUserListByIds = (params) => {
+    const { ids } = params;
+    return userColl.find({ _id: { $in: ids.filter(id => id.length === 24).map(id => new ObjectId(id)) } }).toArray();
 };
 
 const getUserList = () => {
-    return userColl.find();
+    return userColl.find({ active: true }).toArray();
+};
+
+const getUserItemById = (params) =>{
+    const { _id } = params;
+    return userColl.findOne({ _id: ObjectId(_id) });
 };
 
 const getUserItem = (params) => {
     const { lastSocketId } = params;
-    return userColl.find({ lastSocketId });
+    return userColl.findOne({ lastSocketId });
 };
 
 const getAllIds = () => {
-    return userColl.find({}, { projection: { _id: true } });
+    return userColl.find({}, { projection: { _id: true, lastSocketId: true } }).toArray();
 };
 
-const getAllNames = () => {
-    return userColl.find({}, { projection: { name: true } });
+const isDuplicatedName = async (params) => {
+    const { name } = params;
+    return (await userColl.countDocuments({ name })) > 0;
 };
+
+const isActiveDuplicatedName = async (params) => {
+    const { name } = params;
+    return (await userColl.countDocuments({ name, active: true })) > 0;
+}
 
 const setDisabledLoudSpeaker = (params) => {
     const { _id, value } = params;
-    return userColl.update({ _id: ObjectId(_id) }, { $set: { disabledLoudSpeaker: value, updatedAt: new Date() } });
+    return userColl.updateOne({ _id: ObjectId(_id) }, { $set: { disabledLoudSpeaker: value, updatedAt: new Date() } });
 };
 
-const getDisabledLoudSpeakerUserList = () => {
-    return userColl.find({ disabledLoudSpeaker: true });
+const getNotDisabledLoudSpeakerUserList = () => {
+    return userColl.find({ disabledLoudSpeaker: { $ne: true } }, { projection: { lastSocketId: true } }).toArray();
 };
 
 // rooms
@@ -48,37 +74,48 @@ const deleteRoom = (params) => {
 };
 
 const addUserToRoom = (params) => {
-    const { user } = params;
-    return roomColl.update({ $push: { users: user } });
+    const { _id, user } = params;
+    return roomColl.updateOne({ _id: new ObjectId(_id) }, { $push: { users: user } });
 };
 
-const deleteUserToRoom = (params) => {
-    const { user } = params;
-    return roomColl.update({ $pull: { users: user } });
+const deleteUserFromRoom = (params) => {
+    const { _id, user } = params;
+    return roomColl.updateOne({ _id: new ObjectId(_id) }, { $pull: { users: user } });
 };
 
 const getRoomList = () => {
-    return roomColl.find();
+    return roomColl.find().toArray();
 };
 
 const getRoomItem = (params) => {
     const { _id } = params;
-    return roomColl.find({ _id: new ObjectId(_id) });
+    return roomColl.findOne({ _id: new ObjectId(_id) });
 };
 
-module.expors = {
+const updateAllUserInactivated = () => {
+    return userColl.updateMany({}, { $set: { active: false } });
+}
+
+module.exports = {
     createUser,
+    updateName,
+    updateUserInactivated,
+    getUserListByIds,
     getUserList,
+    getUserItemById,
     getUserItem,
     getAllIds,
-    getAllNames,
+    isDuplicatedName,
+    isActiveDuplicatedName,
     setDisabledLoudSpeaker,
-    getDisabledLoudSpeakerUserList,
+    getNotDisabledLoudSpeakerUserList,
     
     createRoom,
     deleteRoom,
     addUserToRoom,
-    deleteUserToRoom,
+    deleteUserFromRoom,
     getRoomList,
-    getRoomItem  
+    getRoomItem,
+
+    updateAllUserInactivated
 };
