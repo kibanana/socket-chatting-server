@@ -4,7 +4,9 @@ const mongoose = require('mongoose');
 const socketIo = require('socket.io');
 const redis = require('socket.io-redis');
 const dataManager = require('./dataManager');
-const dbManager = require('./dbManager');
+// const dbManager = require('./dbManager');
+const cacheManager = require('./cacheManager');
+const redisClient = new cacheManager();
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -31,31 +33,31 @@ dataManager.setIo(io);
 io.on('connection', (socket) => {
     socket.on('disconnect', async () => {
         const socketId = socket.id;
-        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
-        const roomList = await dbManager.getRoomList();
-        const room = await dbManager.getRoomByUser({ userId: String(currentUser._id) });
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
+        const room = await redisClient.getRoomByUser({ userId: currentUser.key });
 
         if (room) {
-            const { _id: roomId, users } = roomList[i];
-            const idx = users.indexOf(String(currentUser._id));
+            const { key: roomId, users } = room;
+            const idx = users.indexOf(currentUser.key);
 
             socket.leave(roomId);
 
             if (users.length <= 1) {
-                await dbManager.deleteRoom({ _id: roomId });
-                return socket.broadcast.emit('admin_delete_data', { room: String(roomId) });
+                await redisClient.deleteRoom({ key: roomId });
+                return socket.broadcast.emit('admin_delete_data', { room: roomId });
             }
             
             let additionalMessage = '';
             if (idx === 0) {
-                additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(await dbManager.getUserItemById({ _id: users[1] })).name}'이(가) 방 주인이 됩니다.`;
+                additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(await redisClient.getUserItemByKey({ key: users[1] })).name}'이(가) 방 주인이 됩니다.`;
             }
 
-            await dbManager.deleteUserFromRoom({ _id: roomId, user: currentUser._id });
+            await redisClient.deleteUserFromRoom({ key: roomId, user: currentUser.key });
+
             users.splice(idx, 1);
 
             socket.broadcast.emit('admin_data', {
-                roomUsers: { room: String(roomId), users }
+                roomUsers: { room: roomId, users }
             });
 
             socket.to(roomId).emit('admin_message', {
@@ -66,26 +68,28 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('notice', {
             message: `${currentUser.name}이(가) 접속을 종료했습니다!`
         });
-        socket.broadcast.emit('admin_delete_data', { user: currentUser._id });
+        socket.broadcast.emit('admin_delete_data', { user: currentUser.key });
 
-        dbManager.updateUserInactivated({ _id: currentUser._id });
+        redisClient.updateUserInactivated({ key: currentUser.key, lastSocketId: socketId });
     });
 
     socket.on('register', async (data) => {
         const socketId = socket.id;
-        const name = (data.name && !(await dbManager.isActiveDuplicatedName({ name: data.name }))) ? data.name : `유저${Date.now()}`;
-        await dbManager.createUser({ lastSocketId: socketId, name });
-        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
+        const name = (data.name && !(await redisClient.isActiveDuplicatedName({ name: data.name }))) ? data.name : `유저${Date.now()}`;
+        await redisClient.createUser({ lastSocketId: socketId, name });
+        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
 
         socket.broadcast.emit('notice', { message: `'${name}'이(가) 서버에 접속했습니다!` });
-        socket.broadcast.emit('admin_data', { userMap: { [String(currentUser._id)]: currentUser } });
+        socket.broadcast.emit('admin_data', { userMap: { [currentUser.key]: currentUser } });
         const userMap = {};
         const roomMap = {};
-        (await dbManager.getUserList()).forEach(user => userMap[String(user._id)] = user );
-        (await dbManager.getRoomList()).forEach(room => roomMap[String(room._id)] = room );
+        (await redisClient.getUserList()).forEach(user => userMap[user.key] = user );
+        (await redisClient.getRoomList()).forEach(room => roomMap[room.key] = room );
+
+        socket.join('loud_speaker');
         
         socket.emit('admin_data', {
-            id: String(currentUser._id),
+            id: currentUser.key,
             name,
             userMap,
             roomMap
@@ -95,13 +99,13 @@ io.on('connection', (socket) => {
 
     socket.on('change_name', async (data) => {
         const socketId = socket.id;
-        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
         const { text: nickname } = data;
 
-        if (await dbManager.isDuplicatedName({ name: nickname })) {
+        if (await redisClient.isDuplicatedName({ name: nickname })) {
             socket.emit('admin_error', { message: `'${nickname}'은(는) 중복된 닉네임입니다` });
         } else {
-            await dbManager.updateName({ _id: currentUser._id, name: nickname });
+            await redisClient.updateName({ key: currentUser.key, name: nickname });
 
             socket.broadcast.emit('admin_data', {
                 userMap: { [socketId]: { ...currentUser, name: nickname } } 
@@ -116,34 +120,27 @@ io.on('connection', (socket) => {
 
     socket.on('loud_speaker', async (data) => {
         const socketId = socket.id;
-        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
         const { text: message } = data;
 
-        // const connectedSocketIds = Array.from(io.sockets.sockets.keys());
-        // users.forEach(user => {
-        //     if (connectedSocketIds.includes(user.lastSocketId)) {
-        //         io.sockets.sockets.get(user.lastSocketId).join(String(roomId));
-        //     }
-        // });
+        const disabledLoudSpeakerUserList = await redisClient.getDisabledLoudSpeakerUserList();
 
-        const notDisabledLoudSpeakerUserList = await dbManager.getDisabledLoudSpeakerUserList();
-        notDisabledLoudSpeakerUserList.forEach((user) => {
-            io.to(user.lastSocketId).emit('loud_speaker', {
-                user: currentUser.name,
-                message
-            });
-        });
+        socket.join('loud_speaker');
+
+        socket.to('loud_speaker').emit('loud_speaker', { user: currentUser.name, message, disabledLoudSpeakerUserList });
     });
 
     socket.on('update_loud_speaker_settings', async () => {
         const socketId = socket.id;
-        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
         let loudSpeakerOn = undefined;
 
-        if (currentUser.disabledLoudSpeaker) loudSpeakerOn = true;
-        else loudSpeakerOn = false;
-
-        await dbManager.setDisabledLoudSpeaker({ _id: currentUser._id, value: !loudSpeakerOn });
+        if (socket.rooms.indexOf('loud_speaker') >= 0) {
+            loudSpeakerOn = false;
+            socket.leave('loud_speaker');
+        } else {
+            loudSpeakerOn = true;
+            socket.join('loud_speaker');
+        }
 
         socket.emit('admin_data', { loudSpeakerOn });
         socket.emit('admin_message', { message: '확성기 설정을 변경했습니다' });
@@ -151,20 +148,20 @@ io.on('connection', (socket) => {
 
     socket.on('create_room', async (data) => {
         const socketId = socket.id;
-        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
         const { text: title, arguments: invitedUsers, password } = data;
 
         if (title && invitedUsers && Array.isArray(invitedUsers) && invitedUsers.length > 0) {
-            const users = await dbManager.getUserListByIds({ ids: invitedUsers });
-            const userIds = [String(currentUser._id), ...users.map(user => String(user._id))];
+            const users = await redisClient.getUserListByIds({ keys: invitedUsers });
+            const userIds = [currentUser.key, ...users.map(user => user.key)];
             const userNames = [currentUser.name, ...users.map(user => user.name)];
 
-            const { insertedId: roomId } = await dbManager.createRoom({ title, users: userIds });
-            socket.join(String(roomId));
+            const roomId = await redisClient.createRoom({ title, users: userIds });
+            socket.join(roomId);
             const connectedSocketIds = Array.from(io.sockets.sockets.keys());
             users.forEach(user => {
                 if (connectedSocketIds.includes(user.lastSocketId)) {
-                    io.sockets.sockets.get(user.lastSocketId).join(String(roomId));
+                    io.sockets.sockets.get(user.lastSocketId).join(roomId);
                 }
             });
 
@@ -172,9 +169,9 @@ io.on('connection', (socket) => {
                 return socket.emit('admin_error', { message: '방 만들기에 실패했습니다!' });
             }
             
-            io.emit('admin_data', { roomMap: { [String(roomId)]: (await dbManager.getRoomItem({ _id: roomId })) } });
-            io.in(String(roomId)).emit('admin_data', { room: String(roomId) });
-            io.in(String(roomId)).emit('admin_message', {
+            io.emit('admin_data', { roomMap: { [roomId]: (await redisClient.getRoomItem({ key: roomId })) } });
+            io.in(roomId).emit('admin_data', { room: roomId });
+            io.in(roomId).emit('admin_message', {
                 message: `'${currentUser.name}'이(가) '${userNames.join(', ')}'을(를) '${title}'에 초대했습니다!`
             });
         } else {
@@ -184,11 +181,11 @@ io.on('connection', (socket) => {
 
     socket.on('send_message', async (data) => {
         const socketId = socket.id;
-        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
         const { text: message, room: roomId } = data;
 
         if (message && roomId) {
-            io.in(String(roomId)).emit('send_message', { user: currentUser.name, message });
+            io.in(roomId).emit('send_message', { user: currentUser.name, message });
         } else {
             socket.emit('admin_error', { message: `빈 메시지가 전달되었습니다!` });
         }
@@ -196,39 +193,39 @@ io.on('connection', (socket) => {
 
     socket.on('join_room', async (data) => {
         const socketId = socket.id;
-        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
         const { room: roomId } = data;
 
         socket.join(roomId);
-        await dbManager.addUserToRoom({ _id: roomId, user: String(currentUser._id) });
+        await redisClient.addUserToRoom({ key: roomId, user: currentUser.key });
 
-        io.emit('admin_data', { roomUsers: { room: roomId, users: (await dbManager.getRoomItem({ _id: roomId })).users } });
+        io.emit('admin_data', { roomUsers: { room: roomId, users: (await redisClient.getRoomItem({ key: roomId })).users } });
         io.in(roomId).emit('admin_data', { room: roomId });
         io.in(roomId).emit('admin_message', { message: `'${currentUser.name}'이(가) 방에 들어왔습니다!` });
     }); // TODO: 방에 입장하기 -> 잠겨있을 때에는 비밀번호 보내야 함
 
     socket.on('leave_room', async (data) => {
         const socketId = socket.id;
-        const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
         const { room: roomId } = data;
         
         if (roomId) {
             socket.leave(roomId);
 
-            const room = await dbManager.getRoomItem({ _id: roomId });
+            const room = await redisClient.getRoomItem({ key: roomId });
             if (room.users.length <= 1) {
-                await dbManager.deleteRoom({ _id: roomId });
+                await redisClient.deleteRoom({ key: roomId });
                 io.emit('admin_delete_data', { room: roomId });
                 return socket.emit('admin_message', { message: '방에 남은 사람이 없어 방이 삭제되었습니다!' });
             }
             
             let additionalMessage = '';
-            const idx = room.users.indexOf(String(currentUser._id));
+            const idx = room.users.indexOf(currentUser.key);
             if (idx === 0) {
-                additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(await dbManager.getUserItemById({ _id: room.users[1] })).name}'이(가) 방 주인이 됩니다.`;
+                additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(await redisClient.getUserItemByKey({ key: room.users[1] })).name}'이(가) 방 주인이 됩니다.`;
             }
 
-            await dbManager.deleteUserFromRoom({ _id: roomId, user: String(currentUser._id) });
+            await redisClient.deleteUserFromRoom({ key: roomId, user: currentUser.key });
             room.users.splice(idx, 1);
 
             io.emit('admin_data', { roomUsers: { room: roomId, users: room.users } });
@@ -258,8 +255,8 @@ io.on('connection', (socket) => {
 process.stdin.resume(); //so the program will not close instantly
 
 const exitHandler = async (options, exitCode) => {
-    await dbManager.updateAllUsersInactivated();
-    await dbManager.deleteAllRooms();
+    await redisClient.updateAllUsersInactivated();
+    await redisClient.deleteAllRooms();
 
     if (options.cleanup) console.log('clean');
     if (exitCode || exitCode === 0) {

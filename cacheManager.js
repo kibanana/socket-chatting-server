@@ -15,17 +15,13 @@ class RedisClient {
 			if (err) console.error(err);
 		});
 
-		this.existsAsync = promisify(this.client.EXISTS).bind(this.client);
 		this.getAsync= promisify(this.client.GET).bind(this.client);
 		this.setAsync = promisify(this.client.SET).bind(this.client);
 		this.delAsync = promisify(this.client.DEL).bind(this.client);
-		this.expireAsync = promisify(this.client.EXPIRE).bind(this.client);
 		this.hmsetAsync = promisify(this.client.HMSET).bind(this.client);
-		this.hmgetAsync = promisify(this.client.HMGET).bind(this.client);
-		this.hdelAsync = promisify(this.client.HDEL).bind(this.client);
 		this.mgetAsync = promisify(this.client.MGET).bind(this.client);
-		this.incrAsync = promisify(this.client.INCR).bind(this.client);
 		this.keysAsync = promisify(this.client.KEYS).bind(this.client);
+		this.incrAsync = promisify(this.client.INCR).bind(this.client);
 	}
 
     // users
@@ -40,7 +36,7 @@ class RedisClient {
 
 		await this.incrAsync('userkey');
 		const key = `activeuser:${Number(await this.getAsync('userkey'))}`;
-		await this.hmsetAsync(key, { createdAt: new Date(), updatedAt: new Date() });
+		await this.hmsetAsync(key, { key, name, createdAt: new Date(), updatedAt: new Date() });
 		await this.setAsync(`socketid:${lastSocketId}`, key);
 		await this.setAsync(`username:${name}`, key);
 		return key;
@@ -50,7 +46,7 @@ class RedisClient {
         const { key, name } = params;
 
 		const user = await this.getAsync(key);
-		await this.hmsetAsync(key, { ...user, updatedAt: new Date() });
+		await this.hmsetAsync(key, { ...user, name, updatedAt: new Date() });
 		const usernameKeys = await this.keysAsync('username:*');
 		const usernameValues = await this.mgetAsync(usernameKeys);
 		for (let i = 0; i < usernameValues.length; i++) {
@@ -85,11 +81,23 @@ class RedisClient {
 		return this.mgetAsync(keys);
     };
 
-    getUserItemById(params) {
+    async getUserBySocketId(params) {
+		const { key } = params;
+
+		return this.getAsync((await this.getAsync(key)));
+    };
+
+	getUserKey(params) {
+		const { lastSocketId } = params;
+
+		return this.getAsync(`socketid:${lastSocketId}`);
+    };
+
+	getUserItemByKey(params) {
 		const { key } = params;
 
 		return this.getAsync(key);
-    };
+	};
 
     async getUserItem(params) {
 		const { lastSocketId } = params;
@@ -114,31 +122,13 @@ class RedisClient {
 		return false;
     };
 
-    async setDisabledLoudSpeaker(params) {
-        const { userId, value } = params;
-
-		const disabledLoudSpeakerList = await this.getAsync('disabledloudspeaker');
-		if (value) {
-			disabledLoudSpeakerList.push(userId);
-		} else {
-			const idx = disabledLoudSpeakerList.indexOf(userId);
-			disabledLoudSpeakerList.value.splice(idx, 1);
-		}
-
-		return this.hmsetAsync('disabledloudspeaker', { value: disabledLoudSpeakerList.value });
-    };
-
-    getDisabledLoudSpeakerUserList() {
-		return this.getAsync('disabledloudspeaker');
-    };
-
     // rooms
     async createRoom(params) {
 		const { title, users } = params;
 
 		await this.incrAsync('roomkey');
 		const key = `room:${Number(await this.getAsync('roomkey'))}`;
-		await this.hmsetAsync(key, { title, users });
+		await this.hmsetAsync(key, { key, title, users });
 		return key;
     };
 
