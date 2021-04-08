@@ -39,10 +39,6 @@ const getUserItem = (params) => {
     return userColl.findOne({ lastSocketId });
 };
 
-const getAllIds = () => {
-    return userColl.find({}, { projection: { _id: true, lastSocketId: true } }).toArray();
-};
-
 const isDuplicatedName = async (params) => {
     const { name } = params;
     return (await userColl.countDocuments({ name })) > 0;
@@ -113,7 +109,6 @@ module.exports = {
     getUserList,
     getUserItemById,
     getUserItem,
-    getAllIds,
     isDuplicatedName,
     isActiveDuplicatedName,
     setDisabledLoudSpeaker,

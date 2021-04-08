@@ -66,7 +66,7 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('notice', {
             message: `${currentUser.name}이(가) 접속을 종료했습니다!`
         });
-        socket.broadcast.emit('admin_delete_data', { user: currentUser._id });  // TODO: inactivated 처리
+        socket.broadcast.emit('admin_delete_data', { user: currentUser._id });
 
         dbManager.updateUserInactivated({ _id: currentUser._id });
     });
@@ -119,7 +119,14 @@ io.on('connection', (socket) => {
         const currentUser = await dbManager.getUserItem({ lastSocketId: socketId });
         const { text: message } = data;
 
-        const notDisabledLoudSpeakerUserList = await dbManager.getNotDisabledLoudSpeakerUserList();
+        // const connectedSocketIds = Array.from(io.sockets.sockets.keys());
+        // users.forEach(user => {
+        //     if (connectedSocketIds.includes(user.lastSocketId)) {
+        //         io.sockets.sockets.get(user.lastSocketId).join(String(roomId));
+        //     }
+        // });
+
+        const notDisabledLoudSpeakerUserList = await dbManager.getDisabledLoudSpeakerUserList();
         notDisabledLoudSpeakerUserList.forEach((user) => {
             io.to(user.lastSocketId).emit('loud_speaker', {
                 user: currentUser.name,

@@ -1,0 +1,207 @@
+import redis from 'redis';
+import { promisify } from 'util';
+
+class RedisClient {
+	constructor () {
+		this.client = redis.createClient('http://localhost:6379');
+
+		// this.client.auth('', (err) => {
+		//   if (err) console.error(err)
+		// });
+
+		this.client.on('connect', () => console.log('connected'));
+		
+		this.client.on('error', (err) => {
+			if (err) console.error(err);
+		});
+
+		this.existsAsync = promisify(this.client.EXISTS).bind(this.client);
+		this.getAsync= promisify(this.client.GET).bind(this.client);
+		this.setAsync = promisify(this.client.SET).bind(this.client);
+		this.delAsync = promisify(this.client.DEL).bind(this.client);
+		this.expireAsync = promisify(this.client.EXPIRE).bind(this.client);
+		this.hmsetAsync = promisify(this.client.HMSET).bind(this.client);
+		this.hmgetAsync = promisify(this.client.HMGET).bind(this.client);
+		this.hdelAsync = promisify(this.client.HDEL).bind(this.client);
+		this.mgetAsync = promisify(this.client.MGET).bind(this.client);
+		this.incrAsync = promisify(this.client.INCR).bind(this.client);
+		this.keysAsync = promisify(this.client.KEYS).bind(this.client);
+	}
+
+    // users
+    async createUser(params) {
+        const { name, lastSocketId } = params;
+
+		const matchedKeys = await this.keys(`:${name}`);
+		if (matchedKeys && matchedKeys[0]) {
+			await this.setAsync(`socketid:${lastSocketId}`, matchedKeys[0]);
+			return matchedKeys[0];
+		}
+
+		await this.incrAsync('userkey');
+		const key = `activeuser:${Number(await this.getAsync('userkey'))}:${name}`;
+		await this.hmsetAsync(key, { createdAt: new Date(), updatedAt: new Date() });
+		await this.setAsync(`socketid:${lastSocketId}`, key);
+		return key;
+    };
+
+    async updateName(params) {
+        const { key, name } = params;
+
+		const user = await this.getAsync(key);
+		await this.hmsetAsync(key.replace(key.split(':')[2], name), { ...user, updatedAt: new Date() });
+		return this.delAsync(key);
+    };
+
+    async updateUserInactivated(params) {
+        const { key, lastSocketId } = params;
+
+		if (key.includes('activeuser:')) {
+			const user = await this.getAsync(key);
+			await this.hmsetAsync(key.replace('active', 'inactive'), { ...user, updatedAt: new Date() });
+			await this.delAsync(key);
+			return this.delAsync(`socketid:${lastSocketId}`);
+		}
+    };
+
+    getUserListByIds(params) {
+        const { keys } = params;
+
+		return this.mgetAsync(keys);
+    };
+
+    async getUserList() {
+		const keys = await this.keysAsync('activeuser:*');
+
+		return this.mgetAsync(keys);
+    };
+
+    getUserItemById(params) {
+		const { key } = params;
+
+		return this.getAsync(key);
+    };
+
+    async getUserItem(params) {
+		const { lastSocketId } = params;
+
+		const key = await this.getAsync(`socketid:${lastSocketId}`);
+		return this.getAsync(key);
+    };
+
+    async isDuplicatedName(params) {
+        const { name } = params;
+
+		const keys = await this.keysAsync(`*:${name}`);
+		if (keys && keys[0]) return true;
+		return false;
+    };
+
+    async isActiveDuplicatedName(params) {
+		const { name } = params;
+
+		const keys = await this.keysAsync(`*:${name}`);
+		if (keys && keys[0] && key[0].includes('activeuser:')) return true;
+		return false;
+    };
+
+    async setDisabledLoudSpeaker(params) {
+        const { userId, value } = params;
+
+		const disabledLoudSpeakerList = await this.getAsync('disabledloudspeaker');
+		if (value) {
+			disabledLoudSpeakerList.push(userId);
+		} else {
+			const idx = disabledLoudSpeakerList.indexOf(userId);
+			disabledLoudSpeakerList.value.splice(idx, 1);
+		}
+
+		return this.hmsetAsync('disabledloudspeaker', { value: disabledLoudSpeakerList.value });
+    };
+
+    getDisabledLoudSpeakerUserList() {
+		return this.getAsync('disabledloudspeaker');
+    };
+
+    // rooms
+    async createRoom(params) {
+		const { title, users } = params;
+
+		await this.incrAsync('roomkey');
+		const key = `room:${Number(await this.getAsync('roomkey'))}`;
+		await this.hmsetAsync(key, { title, users });
+		return key;
+    };
+
+    deleteRoom(params) {
+        const { key } = params;
+
+		return this.delAsync(key);
+    };
+
+    async addUserToRoom(params) {
+		const { key, user } = params;
+
+		const room = await this.getAsync(key);
+		return this.hmsetAsync(key, { ...room, users: [...room.users, user] });
+    };
+
+    async deleteUserFromRoom(params) {
+        const { key, user } = params;
+
+		const room = await this.getAsync(key);
+		room.splice(room.users.indexOf(user), 1);
+		return this.hmsetAsync(key, { ...room });
+    };
+
+    async getRoomList() {
+        const keys = await this.keysAsync('room:*');
+
+		return this.mgetAsync(keys);
+    };
+
+    getRoomItem(params) {
+        const { key } = params;
+
+		return this.getAsync(key);
+    };
+
+    async getRoomByUser(params) {
+        const { userId } = params;
+
+		const keys = this.keysAsync('room:*');
+		const rooms = await this.mgetAsync(keys);
+
+		for (let i = 0; i < rooms.length; i++) {
+			if (rooms[i].includes(userId)) {
+				return rooms[i];
+			}
+		}
+    };
+
+    async updateAllUsersInactivated() {
+		const activeUserkeys = await this.keysAsync('activeuser:*');
+		const socketIdkeys = await this.keysAsync('socketid:*');
+
+		for (let i = 0; i < activeUserkeys.length; i++) {
+			const user = await this.getAsync(activeUserkeys[i]);
+			await this.hmsetAsync(activeUserkeys[i].replace('active', 'inactive'), { ...user, updatedAt: new Date() });
+			await this.delAsync(activeUserkeys[i]);
+		}
+
+		for (let i = 0; i < socketIdkeys.length; i++) {
+			await this.delAsync(socketIdkeys[i]);
+		}
+    };
+
+    async deleteAllRooms() {
+		const keys = await this.keysAsync('room:*');
+		for (let i = 0; i < keys.length; i++) {
+			await this.delAsync(keys[i]);
+		}
+    };
+}
+
+const redisClient = new RedisClient()
+
+export default redisClient
