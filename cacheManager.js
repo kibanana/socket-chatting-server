@@ -32,16 +32,17 @@ class RedisClient {
     async createUser(params) {
         const { name, lastSocketId } = params;
 
-		const matchedKeys = await this.keys(`:${name}`);
-		if (matchedKeys && matchedKeys[0]) {
-			await this.setAsync(`socketid:${lastSocketId}`, matchedKeys[0]);
-			return matchedKeys[0];
+		const matchedKey = await this.getAsync(`username:${name}`);
+		if (matchedKey) {
+			await this.setAsync(`socketid:${lastSocketId}`, matchedKey);
+			return matchedKey;
 		}
 
 		await this.incrAsync('userkey');
-		const key = `activeuser:${Number(await this.getAsync('userkey'))}:${name}`;
+		const key = `activeuser:${Number(await this.getAsync('userkey'))}`;
 		await this.hmsetAsync(key, { createdAt: new Date(), updatedAt: new Date() });
 		await this.setAsync(`socketid:${lastSocketId}`, key);
+		await this.setAsync(`username:${name}`, key);
 		return key;
     };
 
@@ -49,8 +50,16 @@ class RedisClient {
         const { key, name } = params;
 
 		const user = await this.getAsync(key);
-		await this.hmsetAsync(key.replace(key.split(':')[2], name), { ...user, updatedAt: new Date() });
-		return this.delAsync(key);
+		await this.hmsetAsync(key, { ...user, updatedAt: new Date() });
+		const usernameKeys = await this.keysAsync('username:*');
+		const usernameValues = await this.mgetAsync(usernameKeys);
+		for (let i = 0; i < usernameValues.length; i++) {
+			if (usernameValues[i] === key) {
+				await this.delAsync(usernameKeys[i]);
+				break;
+			}
+		}
+		return this.hmsetAsync(`username:${name}`, key);
     };
 
     async updateUserInactivated(params) {
@@ -92,16 +101,16 @@ class RedisClient {
     async isDuplicatedName(params) {
         const { name } = params;
 
-		const keys = await this.keysAsync(`*:${name}`);
-		if (keys && keys[0]) return true;
+		const matchedKey = await this.getAsync(`username:${name}`);
+		if (matchedKey) return true;
 		return false;
     };
 
     async isActiveDuplicatedName(params) {
 		const { name } = params;
 
-		const keys = await this.keysAsync(`*:${name}`);
-		if (keys && keys[0] && key[0].includes('activeuser:')) return true;
+		const matchedKey = await this.getAsync(`username:${name}`);
+		if (matchedKey && matchedKey.includes('activeuser:')) return true;
 		return false;
     };
 
