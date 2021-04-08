@@ -5,8 +5,7 @@ const socketIo = require('socket.io');
 const redis = require('socket.io-redis');
 const dataManager = require('./dataManager');
 // const dbManager = require('./dbManager');
-const cacheManager = require('./cacheManager');
-const redisClient = new cacheManager();
+const redisClient = require('./cacheManager');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -37,7 +36,10 @@ io.on('connection', (socket) => {
         const room = await redisClient.getRoomByUser({ userId: currentUser.key });
 
         if (room) {
-            const { key: roomId, users } = room;
+            const { key: roomId } = room;
+            let { users } = room;
+
+            users = JSON.parse(users);
             const idx = users.indexOf(currentUser.key);
 
             socket.leave(roomId);
@@ -71,20 +73,28 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('admin_delete_data', { user: currentUser.key });
 
         redisClient.updateUserInactivated({ key: currentUser.key, lastSocketId: socketId });
+        redisClient.updateUsernameInactivated({ name: currentUser.name, key: currentUser.key });
     });
 
     socket.on('register', async (data) => {
         const socketId = socket.id;
-        const name = (data.name && !(await redisClient.isActiveDuplicatedName({ name: data.name }))) ? data.name : `유저${Date.now()}`;
+        let name = data.name && !(await redisClient.isActiveDuplicatedName({ name: data.name })) ? data.name : `유저${Date.now()}`;
         await redisClient.createUser({ lastSocketId: socketId, name });
-        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
 
+        if (name === data.name) {
+            await redisClient.updateUserActivated({ key: currentUser.key });
+            await redisClient.updateUsernameActivated({ name: currentUser.name, key: currentUser.key });
+        }
+        
         socket.broadcast.emit('notice', { message: `'${name}'이(가) 서버에 접속했습니다!` });
         socket.broadcast.emit('admin_data', { userMap: { [currentUser.key]: currentUser } });
         const userMap = {};
         const roomMap = {};
-        (await redisClient.getUserList()).forEach(user => userMap[user.key] = user );
-        (await redisClient.getRoomList()).forEach(room => roomMap[room.key] = room );
+        const users = await redisClient.getUserList();
+        const rooms = await redisClient.getRoomList();
+        users.forEach(user => userMap[user.key] = user );
+        rooms.forEach(room => roomMap[room.key] = { ...room, users: JSON.parse(room.users) } );
 
         socket.join('loud_speaker');
         
@@ -99,7 +109,7 @@ io.on('connection', (socket) => {
 
     socket.on('change_name', async (data) => {
         const socketId = socket.id;
-        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
         const { text: nickname } = data;
 
         if (await redisClient.isDuplicatedName({ name: nickname })) {
@@ -120,21 +130,16 @@ io.on('connection', (socket) => {
 
     socket.on('loud_speaker', async (data) => {
         const socketId = socket.id;
-        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
         const { text: message } = data;
-
-        const disabledLoudSpeakerUserList = await redisClient.getDisabledLoudSpeakerUserList();
-
-        socket.join('loud_speaker');
-
-        socket.to('loud_speaker').emit('loud_speaker', { user: currentUser.name, message, disabledLoudSpeakerUserList });
+        
+        io.in('loud_speaker').emit('loud_speaker', { user: currentUser.name, message });
     });
 
     socket.on('update_loud_speaker_settings', async () => {
-        const socketId = socket.id;
         let loudSpeakerOn = undefined;
 
-        if (socket.rooms.indexOf('loud_speaker') >= 0) {
+        if (socket.rooms.has('loud_speaker')) {
             loudSpeakerOn = false;
             socket.leave('loud_speaker');
         } else {
@@ -148,7 +153,7 @@ io.on('connection', (socket) => {
 
     socket.on('create_room', async (data) => {
         const socketId = socket.id;
-        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
         const { text: title, arguments: invitedUsers, password } = data;
 
         if (title && invitedUsers && Array.isArray(invitedUsers) && invitedUsers.length > 0) {
@@ -159,17 +164,20 @@ io.on('connection', (socket) => {
             const roomId = await redisClient.createRoom({ title, users: userIds });
             socket.join(roomId);
             const connectedSocketIds = Array.from(io.sockets.sockets.keys());
-            users.forEach(user => {
-                if (connectedSocketIds.includes(user.lastSocketId)) {
-                    io.sockets.sockets.get(user.lastSocketId).join(roomId);
+            const lastSocketIds = await redisClient.getLastSocketIds({ userKeys: userIds });
+            lastSocketIds.forEach(lastSocketId => {
+                if (connectedSocketIds.includes(lastSocketId)) {
+                    io.sockets.sockets.get(lastSocketId).join(roomId);
                 }
             });
 
             if (userIds.length <= 1) {
                 return socket.emit('admin_error', { message: '방 만들기에 실패했습니다!' });
             }
+
+            const room = await redisClient.getRoomItem({ key: roomId });
             
-            io.emit('admin_data', { roomMap: { [roomId]: (await redisClient.getRoomItem({ key: roomId })) } });
+            io.emit('admin_data', { roomMap: { [roomId]: { ...room, users: JSON.parse(room.users) } } });
             io.in(roomId).emit('admin_data', { room: roomId });
             io.in(roomId).emit('admin_message', {
                 message: `'${currentUser.name}'이(가) '${userNames.join(', ')}'을(를) '${title}'에 초대했습니다!`
@@ -181,7 +189,7 @@ io.on('connection', (socket) => {
 
     socket.on('send_message', async (data) => {
         const socketId = socket.id;
-        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
         const { text: message, room: roomId } = data;
 
         if (message && roomId) {
@@ -193,26 +201,27 @@ io.on('connection', (socket) => {
 
     socket.on('join_room', async (data) => {
         const socketId = socket.id;
-        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
         const { room: roomId } = data;
 
         socket.join(roomId);
         await redisClient.addUserToRoom({ key: roomId, user: currentUser.key });
 
-        io.emit('admin_data', { roomUsers: { room: roomId, users: (await redisClient.getRoomItem({ key: roomId })).users } });
+        io.emit('admin_data', { roomUsers: { room: roomId, users: JSON.parse((await redisClient.getRoomItem({ key: roomId })).users) } });
         io.in(roomId).emit('admin_data', { room: roomId });
         io.in(roomId).emit('admin_message', { message: `'${currentUser.name}'이(가) 방에 들어왔습니다!` });
     }); // TODO: 방에 입장하기 -> 잠겨있을 때에는 비밀번호 보내야 함
 
     socket.on('leave_room', async (data) => {
         const socketId = socket.id;
-        const currentUser = await redisClient.getUserBySocketId({ lastSocketId: socketId });
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
         const { room: roomId } = data;
         
         if (roomId) {
             socket.leave(roomId);
 
             const room = await redisClient.getRoomItem({ key: roomId });
+            room.users = JSON.parse(room.users);
             if (room.users.length <= 1) {
                 await redisClient.deleteRoom({ key: roomId });
                 io.emit('admin_delete_data', { room: roomId });
@@ -255,7 +264,8 @@ io.on('connection', (socket) => {
 process.stdin.resume(); //so the program will not close instantly
 
 const exitHandler = async (options, exitCode) => {
-    await redisClient.updateAllUsersInactivated();
+    await redisClient.updateUserInactivated({ key: currentUser.key, lastSocketId: socketId });
+    await redisClient.updateUsernameInactivated({ name: currentUser.name, key: currentUser.key });
     await redisClient.deleteAllRooms();
 
     if (options.cleanup) console.log('clean');

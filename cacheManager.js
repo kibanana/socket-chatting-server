@@ -1,5 +1,5 @@
-import redis from 'redis';
-import { promisify } from 'util';
+const redis = require('redis');
+const { promisify } = require('util');
 
 class RedisClient {
 	constructor () {
@@ -9,7 +9,7 @@ class RedisClient {
 		//   if (err) console.error(err)
 		// });
 
-		this.client.on('connect', () => console.log('connected'));
+		this.client.on('connect', () => console.log('Cache is connected'));
 		
 		this.client.on('error', (err) => {
 			if (err) console.error(err);
@@ -19,6 +19,7 @@ class RedisClient {
 		this.setAsync = promisify(this.client.SET).bind(this.client);
 		this.delAsync = promisify(this.client.DEL).bind(this.client);
 		this.hmsetAsync = promisify(this.client.HMSET).bind(this.client);
+		this.hgetallAsync = promisify(this.client.HGETALL).bind(this.client);
 		this.mgetAsync = promisify(this.client.MGET).bind(this.client);
 		this.keysAsync = promisify(this.client.KEYS).bind(this.client);
 		this.incrAsync = promisify(this.client.INCR).bind(this.client);
@@ -45,7 +46,7 @@ class RedisClient {
     async updateName(params) {
         const { key, name } = params;
 
-		const user = await this.getAsync(key);
+		const user = await this.hgetallAsync(key);
 		await this.hmsetAsync(key, { ...user, name, updatedAt: new Date() });
 		const usernameKeys = await this.keysAsync('username:*');
 		const usernameValues = await this.mgetAsync(usernameKeys);
@@ -55,36 +56,57 @@ class RedisClient {
 				break;
 			}
 		}
-		return this.hmsetAsync(`username:${name}`, key);
+		return this.setAsync(`username:${name}`, key);
     };
 
     async updateUserInactivated(params) {
         const { key, lastSocketId } = params;
 
-		if (key.includes('activeuser:')) {
-			const user = await this.getAsync(key);
-			await this.hmsetAsync(key.replace('active', 'inactive'), { ...user, updatedAt: new Date() });
+		if (key.startsWith('activeuser:')) {
+			const user = await this.hgetallAsync(key);
+			await this.hmsetAsync(key.replace('active', 'inactive'), { ...user, key: key.replace('active', 'inactive'), updatedAt: new Date() });
 			await this.delAsync(key);
 			return this.delAsync(`socketid:${lastSocketId}`);
 		}
     };
 
-    getUserListByIds(params) {
+	async updateUserActivated(params) {
+		const { key } = params;
+
+		if (key.startsWith('inactiveuser:')) {
+			const user = await this.hgetallAsync(key);
+			await this.hmsetAsync(key.replace('inactive', 'active'), { ...user, key: key.replace('inactive', 'active'), updatedAt: new Date() });
+			return this.delAsync(key);
+		}
+	}
+
+    async getUserListByIds(params) {
         const { keys } = params;
 
-		return this.mgetAsync(keys);
+		const result = [];
+		for (let i = 0; i < keys.length; i++) {
+			result.push(await this.hgetallAsync(keys[i]));
+		}
+
+		return result;
     };
 
     async getUserList() {
 		const keys = await this.keysAsync('activeuser:*');
 
-		return this.mgetAsync(keys);
+		const result = [];
+		for (let i = 0; i < keys.length; i++) {
+			result.push(await this.hgetallAsync(keys[i]));
+		}
+
+		return result;
     };
 
     async getUserBySocketId(params) {
 		const { key } = params;
 
-		return this.getAsync((await this.getAsync(key)));
+		const userKey = await this.getAsync(`socketid:${key}`)
+		return (await this.hgetallAsync(userKey));
     };
 
 	getUserKey(params) {
@@ -96,14 +118,14 @@ class RedisClient {
 	getUserItemByKey(params) {
 		const { key } = params;
 
-		return this.getAsync(key);
+		return this.hgetallAsync(key);
 	};
 
     async getUserItem(params) {
 		const { lastSocketId } = params;
 
 		const key = await this.getAsync(`socketid:${lastSocketId}`);
-		return this.getAsync(key);
+		return this.hgetallAsync(key);
     };
 
     async isDuplicatedName(params) {
@@ -118,9 +140,21 @@ class RedisClient {
 		const { name } = params;
 
 		const matchedKey = await this.getAsync(`username:${name}`);
-		if (matchedKey && matchedKey.includes('activeuser:')) return true;
+		if (matchedKey && matchedKey.startsWith('activeuser:')) return true;
 		return false;
     };
+
+	async updateUsernameInactivated(params) {
+		const { name, key } = params;
+
+		return this.setAsync(`username:${name}`, key.replace('active', 'inactive'));
+	};
+
+	async updateUsernameActivated(params) {
+		const { name, key } = params;
+
+		return this.setAsync(`username:${name}`, key.replace('inactive', 'active'));
+	};
 
     // rooms
     async createRoom(params) {
@@ -128,7 +162,7 @@ class RedisClient {
 
 		await this.incrAsync('roomkey');
 		const key = `room:${Number(await this.getAsync('roomkey'))}`;
-		await this.hmsetAsync(key, { key, title, users });
+		await this.hmsetAsync(key, { key, title, users: JSON.stringify(users) });
 		return key;
     };
 
@@ -141,35 +175,45 @@ class RedisClient {
     async addUserToRoom(params) {
 		const { key, user } = params;
 
-		const room = await this.getAsync(key);
-		return this.hmsetAsync(key, { ...room, users: [...room.users, user] });
+		const room = await this.hgetallAsync(key);
+		return this.hmsetAsync(key, { ...room, users: JSON.stringify([...JSON.parse(room.users), user]) });
     };
 
     async deleteUserFromRoom(params) {
         const { key, user } = params;
 
-		const room = await this.getAsync(key);
-		room.splice(room.users.indexOf(user), 1);
+		const room = await this.hgetallAsync(key);
+		room.users = JSON.parse(room.users);
+		room.users.splice(room.users.indexOf(user), 1);
+		room.users = JSON.stringify(room.users)
 		return this.hmsetAsync(key, { ...room });
     };
 
     async getRoomList() {
         const keys = await this.keysAsync('room:*');
 
-		return this.mgetAsync(keys);
+		const result = [];
+		for (let i = 0; i < keys.length; i++) {
+			result.push(await this.hgetallAsync(keys[i]));
+		}
+
+		return result;
     };
 
     getRoomItem(params) {
         const { key } = params;
 
-		return this.getAsync(key);
+		return this.hgetallAsync(key);
     };
 
     async getRoomByUser(params) {
         const { userId } = params;
 
 		const keys = this.keysAsync('room:*');
-		const rooms = await this.mgetAsync(keys);
+		const rooms = [];
+		for (let i = 0; i < keys.length; i++) {
+			rooms.push(await this.hgetallAsync(keys[i]));
+		}
 
 		for (let i = 0; i < rooms.length; i++) {
 			if (rooms[i].includes(userId)) {
@@ -183,7 +227,7 @@ class RedisClient {
 		const socketIdkeys = await this.keysAsync('socketid:*');
 
 		for (let i = 0; i < activeUserkeys.length; i++) {
-			const user = await this.getAsync(activeUserkeys[i]);
+			const user = await this.hgetallAsync(activeUserkeys[i]);
 			await this.hmsetAsync(activeUserkeys[i].replace('active', 'inactive'), { ...user, updatedAt: new Date() });
 			await this.delAsync(activeUserkeys[i]);
 		}
@@ -199,8 +243,22 @@ class RedisClient {
 			await this.delAsync(keys[i]);
 		}
     };
+
+	async getLastSocketIds(params) {
+		const { userKeys } = params;
+		const socketIdkeys = await this.keysAsync('socketid:*');
+
+		const result = [];
+		for (let i = 0; i < socketIdkeys.length; i++) {
+			if (userKeys.includes(await this.getAsync(socketIdkeys[i]))) {
+				const temp = socketIdkeys[i].replace('socketid:', '')
+				result.push(temp);
+			}
+		}
+		return result;
+	}
 }
 
 const redisClient = new RedisClient()
 
-export default redisClient
+module.exports = redisClient
