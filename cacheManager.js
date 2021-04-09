@@ -23,6 +23,7 @@ class RedisClient {
 		this.mgetAsync = promisify(this.client.MGET).bind(this.client);
 		this.keysAsync = promisify(this.client.KEYS).bind(this.client);
 		this.incrAsync = promisify(this.client.INCR).bind(this.client);
+		this.multiAsync = promisify(this.client.MULTI).bind(this.client);
 	}
 
     // users
@@ -225,15 +226,20 @@ class RedisClient {
     async updateAllUsersInactivated() {
 		const activeUserkeys = await this.keysAsync('activeuser:*');
 		const socketIdkeys = await this.keysAsync('socketid:*');
+		const usernamekeys = await this.keysAsync('username:*');
 
 		for (let i = 0; i < activeUserkeys.length; i++) {
 			const user = await this.hgetallAsync(activeUserkeys[i]);
-			await this.hmsetAsync(activeUserkeys[i].replace('active', 'inactive'), { ...user, updatedAt: new Date() });
+			await this.hmsetAsync(activeUserkeys[i].replace('active', 'inactive'), { ...user, key: activeUserkeys[i].replace('active', 'inactive'), updatedAt: new Date() });
 			await this.delAsync(activeUserkeys[i]);
 		}
 
 		for (let i = 0; i < socketIdkeys.length; i++) {
 			await this.delAsync(socketIdkeys[i]);
+		}
+
+		for (let i = 0; i < usernamekeys.length; i++) {
+			await this.delAsync(usernamekeys[i]);
 		}
     };
 
@@ -259,6 +265,6 @@ class RedisClient {
 	}
 }
 
-const redisClient = new RedisClient()
+const redisClient = new RedisClient();
 
-module.exports = redisClient
+module.exports = redisClient;
