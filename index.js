@@ -164,15 +164,13 @@ io.on('connection', (socket) => {
             const users = await redisClient.getUserListByIds({ keys: invitedUsers });
             const userIds = [currentUser.key, ...users.map(user => user.key)];
             const userNames = [currentUser.name, ...users.map(user => user.name)];
+            const message = `'${currentUser.name}'이(가) '${userNames.join(', ')}'을(를) '${title}'에 초대했습니다!`;
 
             const roomId = await redisClient.createRoom({ title, users: userIds });
             socket.join(roomId);
-            const connectedSocketIds = Array.from(io.sockets.sockets.keys());
-            const lastSocketIds = await redisClient.getLastSocketIds({ userKeys: userIds });
-            lastSocketIds.forEach(lastSocketId => {
-                if (connectedSocketIds.includes(lastSocketId)) {
-                    io.sockets.sockets.get(lastSocketId).join(roomId);
-                }
+            
+            userIds.forEach(userKey => {
+                if (userKey !== currentUser.key) io.in(userKey).emit('invited_room', { room: roomId, message });
             });
 
             if (userIds.length <= 1) {
@@ -183,12 +181,20 @@ io.on('connection', (socket) => {
             
             io.emit('admin_data', { roomMap: { [roomId]: { ...room, users: JSON.parse(room.users) } } });
             io.in(roomId).emit('admin_data', { room: roomId });
-            io.in(roomId).emit('admin_message', {
-                message: `'${currentUser.name}'이(가) '${userNames.join(', ')}'을(를) '${title}'에 초대했습니다!`
-            });
+            io.in(currentUser.key).emit('admin_message', { message });
         } else {
             io.in(currentUser.key).emit('admin_error', { message: `방을 만들 수 없습니다!` });
         }
+    });
+
+    socket.on('invited_room', async (data) => {
+        const socketId = socket.id;
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
+        const { room: roomId, message } = data;
+
+        socket.join(roomId);
+        io.in(currentUser.key).emit('admin_data', { room: roomId });
+        io.in(currentUser.key).emit('admin_message', { message });
     });
 
     socket.on('send_message', async (data) => {

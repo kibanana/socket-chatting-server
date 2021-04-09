@@ -249,20 +249,6 @@ class RedisClient {
 			await this.delAsync(keys[i]);
 		}
     };
-
-	async getLastSocketIds(params) {
-		const { userKeys } = params;
-		const socketIdkeys = await this.keysAsync('socketid:*');
-
-		const result = [];
-		for (let i = 0; i < socketIdkeys.length; i++) {
-			if (userKeys.includes(await this.getAsync(socketIdkeys[i]))) {
-				const temp = socketIdkeys[i].replace('socketid:', '')
-				result.push(temp);
-			}
-		}
-		return result;
-	}
 }
 
 const redisClient = new RedisClient();
