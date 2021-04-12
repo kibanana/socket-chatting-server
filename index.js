@@ -277,15 +277,43 @@ io.on('connection', (socket) => {
         }
     });
 
-    // socket.on('') // TODO: 방에서 강퇴시키기(마스터 권한 필요)
-    // socker.on('') // TODO: 방 폭파(마스터 권한 필요)
+    socket.on('kick_out_room', (data) => {
+        
+    }); // TODO: 방에서 강퇴시키기(마스터 권한 필요)
 
-    // socket.on('') // TOOD: 권한 넘기기(마스터 권한 필요)
+    socket.emit('blew_up_room', async () => {
+        const socketId = socket.id;
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
+        const { room: roomId, message } = data;
 
-    // socket.on('set_room_notice') // 방 공지 설정(마스터 권한 필요)
-    // socket.on('set_room_color') // 방 대표색 설정(마스터 권한 필요)
+        socket.leave(roomId);
+        io.in(currentUser.key).emit('admin_delete_data', { myRoom: true });
+        io.in(currentUser.key).emit('admin_message', { message });
+    });
 
-    // socket.on('invite_friend') // TODO: 내가 있는 방에 친구 초대하기(비밀번호가 있어도 없는 것처럼 동작해야 함)
+    socket.on('blow_up_room', async (data) => {
+        const { room: roomId } = data;
+
+        const room = await redisClient.getRoomItem({ key: roomId });
+        await redisClient.deleteRoom({ key: roomId });
+
+        socket.leave(roomId);
+        
+        room.users.forEach(userKey => {
+            if (userKey !== currentUser.key) io.in(userKey).emit('blew_up_room', { room: roomId, message: '방이 폭파되었습니다.' });
+        });
+
+        io.emit('admin_delete_data', { room: roomId });
+        io.in(currentUser.key).emit('admin_message', { message: '방을 폭파했습니다.'});
+    });
+
+    socket.on('set_room_notice', (data) => {
+
+    }); // TODO: 방 공지 설정(마스터 권한 필요)
+
+    socket.on('invite_friend', (data) => {
+
+    }); // TODO: 내가 있는 방에 친구 초대하기(비밀번호가 있어도 없는 것처럼 동작해야 함)
 });
 
 process.stdin.resume(); //so the program will not close instantly
