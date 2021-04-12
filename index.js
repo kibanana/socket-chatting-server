@@ -277,9 +277,37 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('kick_out_room', (data) => {
+    socket.on('kicked_out_room', (data) => {
+        const socketId = socket.id;
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
+        const { room: roomId, message } = data;
+
+        socket.leave(roomId);
+        io.in(currentUser.key).emit('admin_delete_data', { myRoom: true });
+        io.in(currentUser.key).emit('admin_message', { message });
+    })
+
+    socket.on('kick_out_room', async (data) => {
+        const { room: roomId, arguments: kickedOutUsers } = data;
+
+        const room = await redisClient.getRoomItem({ key: roomId });
+        room.users = JSON.parse(room.users);
+
+        for (let i = 0; i < kickedOutUsers.length; i++) {
+            const idx = room.users.indexOf(kickedOutUsers[0]);
+
+            if (idx >= 0) {
+                io.in(room.users[idx]).emit('blew_up_room', { room: roomId, message: '방에서 강퇴당했습니다.' });
+                io.in(room.users[idx]).emit('admin_delete_data', { myRoom: true });
+                await redisClient.deleteUserFromRoom({ key: roomId, user: room.users[idx] });
+                room.users.splice(idx, 1);
+            }
+        }
+
+        io.emit('admin_data', { roomUsers: { room: roomId, users: room.users } });
+        io.in(roomId).emit('admin_message', { message: `유저 ${kickedOutUsers.length}명이 방에서 강퇴당했습니다.` });
         
-    }); // TODO: 방에서 강퇴시키기(마스터 권한 필요)
+    });
 
     socket.emit('blew_up_room', async () => {
         const socketId = socket.id;
@@ -292,6 +320,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('blow_up_room', async (data) => {
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
         const { room: roomId } = data;
 
         const room = await redisClient.getRoomItem({ key: roomId });
