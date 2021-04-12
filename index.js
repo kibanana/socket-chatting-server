@@ -262,8 +262,19 @@ io.on('connection', (socket) => {
         }
     });
 
-    // socket.on('lock_room');
-    // socket.on('update_room_password'); // TODO: 방 비밀번호 변경
+    socket.on('update_room_password', async (data) => {
+        const socketId = socket.id;
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
+        const { room: roomId, password } = data;
+
+        if (roomId) {
+            await redisClient.updateRoomPassword({ key: roomId, password });
+
+            io.in(currentUser.key).emit('admin_message', { message: '방 비밀번호 설정을 변경했습니다.'});
+        } else {
+            io.in(currentUser.key).emit('admin_error', { message: `정상적으로 방에서 나갈 수 없습니다!` });
+        }
+    });
 
     // socket.on('') // TODO: 방에서 강퇴시키기(마스터 권한 필요)
     // socker.on('') // TODO: 방 폭파(마스터 권한 필요)

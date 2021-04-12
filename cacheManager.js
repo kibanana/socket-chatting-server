@@ -223,6 +223,13 @@ class RedisClient {
 		}
     };
 
+	async updateRoomPassword(params) {
+		const { key, password } = params;
+
+		const room = await this.hgetallAsync(key);
+		return this.hmsetAsync(key, { ...room, password });
+	}
+
     async updateAllUsersInactivated() {
 		const activeUserkeys = await this.keysAsync('activeuser:*');
 		const socketIdkeys = await this.keysAsync('socketid:*');
