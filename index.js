@@ -94,7 +94,7 @@ io.on('connection', (socket) => {
         const users = await redisClient.getUserList();
         const rooms = await redisClient.getRoomList();
         users.forEach(user => userMap[user.key] = user );
-        rooms.forEach(room => roomMap[room.key] = { ...room, users: JSON.parse(room.users) } );
+        rooms.forEach(room => roomMap[room.key] = { ...room, users: JSON.parse(room.users), password: undefined } );
 
         socket.join(currentUser.key);
         socket.join('loud_speaker');
@@ -166,7 +166,7 @@ io.on('connection', (socket) => {
             const userNames = [currentUser.name, ...users.map(user => user.name)];
             const message = `'${currentUser.name}'이(가) '${userNames.join(', ')}'을(를) '${title}'에 초대했습니다!`;
 
-            const roomId = await redisClient.createRoom({ title, users: userIds });
+            const roomId = await redisClient.createRoom({ title, users: userIds, password });
             socket.join(roomId);
             
             userIds.forEach(userKey => {
@@ -179,7 +179,7 @@ io.on('connection', (socket) => {
 
             const room = await redisClient.getRoomItem({ key: roomId });
             
-            io.emit('admin_data', { roomMap: { [roomId]: { ...room, users: JSON.parse(room.users) } } });
+            io.emit('admin_data', { roomMap: { [roomId]: { ...room, users: JSON.parse(room.users), password: undefined } } });
             io.in(roomId).emit('admin_data', { room: roomId });
             io.in(currentUser.key).emit('admin_message', { message });
         } else {
@@ -212,7 +212,12 @@ io.on('connection', (socket) => {
     socket.on('join_room', async (data) => {
         const socketId = socket.id;
         const currentUser = await redisClient.getUserBySocketId({ key: socketId });
-        const { room: roomId } = data;
+        const { room: roomId, password } = data;
+
+        const room = redisClient.getRoomItem({ key: roomId });
+        if (room.password && room.password !== password) {
+            return io.in(currentUser.key).emit('admin_error', { message: `비밀번호가 틀렸습니다!` });
+        }
 
         socket.join(roomId);
         await redisClient.addUserToRoom({ key: roomId, user: currentUser.key });
@@ -220,7 +225,7 @@ io.on('connection', (socket) => {
         io.emit('admin_data', { roomUsers: { room: roomId, users: JSON.parse((await redisClient.getRoomItem({ key: roomId })).users) } });
         io.in(roomId).emit('admin_data', { room: roomId });
         io.in(roomId).emit('admin_message', { message: `'${currentUser.name}'이(가) 방에 들어왔습니다!` });
-    }); // TODO: 방에 입장하기 -> 잠겨있을 때에는 비밀번호 보내야 함
+    });
 
     socket.on('leave_room', async (data) => {
         const socketId = socket.id;
@@ -257,8 +262,8 @@ io.on('connection', (socket) => {
         }
     });
 
-    // socket.on('lock_room') // TODO: 방 비밀번호 설정
-    // socket.on('update_room_password') // TODO: 방 비밀번호 변경
+    // socket.on('lock_room');
+    // socket.on('update_room_password'); // TODO: 방 비밀번호 변경
 
     // socket.on('') // TODO: 방에서 강퇴시키기(마스터 권한 필요)
     // socker.on('') // TODO: 방 폭파(마스터 권한 필요)

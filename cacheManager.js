@@ -159,11 +159,11 @@ class RedisClient {
 
     // rooms
     async createRoom(params) {
-		const { title, users } = params;
+		const { title, users, password } = params;
 
 		await this.incrAsync('roomkey');
 		const key = `room:${Number(await this.getAsync('roomkey'))}`;
-		await this.hmsetAsync(key, { key, title, users: JSON.stringify(users) });
+		await this.hmsetAsync(key, { key, title, users: JSON.stringify(users), password });
 		return key;
     };
 
