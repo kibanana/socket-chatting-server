@@ -288,25 +288,29 @@ io.on('connection', (socket) => {
     })
 
     socket.on('kick_out_room', async (data) => {
+        const currentUser = await redisClient.getUserBySocketId({ key: socketId });
         const { room: roomId, arguments: kickedOutUsers } = data;
 
-        const room = await redisClient.getRoomItem({ key: roomId });
-        room.users = JSON.parse(room.users);
-
-        for (let i = 0; i < kickedOutUsers.length; i++) {
-            const idx = room.users.indexOf(kickedOutUsers[0]);
-
-            if (idx >= 0) {
-                io.in(room.users[idx]).emit('blew_up_room', { room: roomId, message: '방에서 강퇴당했습니다.' });
-                io.in(room.users[idx]).emit('admin_delete_data', { myRoom: true });
-                await redisClient.deleteUserFromRoom({ key: roomId, user: room.users[idx] });
-                room.users.splice(idx, 1);
+        if (kickedOutUsers && Array.isArray(kickedOutUsers) && kickedOutUsers.length > 0) {
+            const room = await redisClient.getRoomItem({ key: roomId });
+            room.users = JSON.parse(room.users);
+    
+            for (let i = 0; i < kickedOutUsers.length; i++) {
+                const idx = room.users.indexOf(kickedOutUsers[0]);
+    
+                if (idx >= 0) {
+                    io.in(room.users[idx]).emit('blew_up_room', { room: roomId, message: '방에서 강퇴당했습니다.' });
+                    io.in(room.users[idx]).emit('admin_delete_data', { myRoom: true });
+                    await redisClient.deleteUserFromRoom({ key: roomId, user: room.users[idx] });
+                    room.users.splice(idx, 1);
+                }
             }
-        }
 
-        io.emit('admin_data', { roomUsers: { room: roomId, users: room.users } });
-        io.in(roomId).emit('admin_message', { message: `유저 ${kickedOutUsers.length}명이 방에서 강퇴당했습니다.` });
-        
+            io.emit('admin_data', { roomUsers: { room: roomId, users: room.users } });
+            io.in(roomId).emit('admin_message', { message: `유저 ${kickedOutUsers.length}명이 방에서 강퇴당했습니다.` });
+        } else {
+            io.in(currentUser.key).emit('admin_error', { message: `방에서 유저를 강퇴할 수 없습니다!` });
+        }
     });
 
     socket.emit('blew_up_room', async () => {
