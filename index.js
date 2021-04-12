@@ -94,7 +94,7 @@ io.on('connection', (socket) => {
         const users = await redisClient.getUserList();
         const rooms = await redisClient.getRoomList();
         users.forEach(user => userMap[user.key] = user );
-        rooms.forEach(room => roomMap[room.key] = { ...room, users: JSON.parse(room.users), password: undefined } );
+        rooms.forEach(room => roomMap[room.key] = { ...room, users: JSON.parse(room.users), password: undefined, isLocked: Boolean(password) } );
 
         socket.join(currentUser.key);
         socket.join('loud_speaker');
@@ -179,7 +179,7 @@ io.on('connection', (socket) => {
 
             const room = await redisClient.getRoomItem({ key: roomId });
             
-            io.emit('admin_data', { roomMap: { [roomId]: { ...room, users: JSON.parse(room.users), password: undefined } } });
+            io.emit('admin_data', { roomMap: { [roomId]: { ...room, users: JSON.parse(room.users), password: undefined, isLocked: Boolean(password) } } });
             io.in(roomId).emit('admin_data', { room: roomId });
             io.in(currentUser.key).emit('admin_message', { message });
         } else {
@@ -270,9 +270,10 @@ io.on('connection', (socket) => {
         if (roomId) {
             await redisClient.updateRoomPassword({ key: roomId, password });
 
-            io.in(currentUser.key).emit('admin_message', { message: '방 비밀번호 설정을 변경했습니다.'});
+            io.in(currentUser.key).emit('admin_message', { message: '방 비밀번호를 변경했습니다.'});
+            io.emit('admin_data', { roomIsLocked: { room: roomId, isLocked: Boolean(password) } });
         } else {
-            io.in(currentUser.key).emit('admin_error', { message: `정상적으로 방에서 나갈 수 없습니다!` });
+            io.in(currentUser.key).emit('admin_error', { message: `정상적으로 방 비밀번호를 변경할 수 없습니다!` });
         }
     });
 
