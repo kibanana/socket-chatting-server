@@ -89,7 +89,7 @@ io.on('connection', (socket) => {
             
             let additionalMessage = '';
             if (idx === 0) {
-                additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(await redisClient.getUserItemByKey({ key: users[1] })).name}'이(가) 방 주인이 됩니다.`;
+                additionalMessage += `방 주인 '${currentUser.name}'이(가) 나갔으므로 '${(await redisClient.getUserItemByKey({ key: users[1] })).name}'이(가) 새로운 방 주인이 됩니다.`;
             }
 
             await redisClient.deleteUserFromRoom({ key: roomId, user: currentUser.key });
@@ -103,12 +103,12 @@ io.on('connection', (socket) => {
                 }
             });
             socket.to(roomId).emit(roomSendMessage, {
-                message: `'${currentUser.name}'가 방에서 나갔습니다. ${additionalMessage}`
+                message: `'${currentUser.name}'이(가) 방에서 나갔습니다. ${additionalMessage}`
             });
         }
 
         socket.broadcast.emit(userNotice, {
-            message: `${currentUser.name}이(가) 접속을 종료했습니다!`
+            message: `${currentUser.name}이(가) 접속을 종료했습니다.`
         });
         socket.broadcast.emit(systemDeleteData, {
             user: currentUser.key
@@ -130,7 +130,7 @@ io.on('connection', (socket) => {
         }
         
         socket.broadcast.emit(userNotice, {
-            message: `'${name}'이(가) 서버에 접속했습니다!`
+            message: `'${name}'이(가) 접속했습니다.`
         });
         socket.broadcast.emit(systemSendData, {
             userMap: {
@@ -155,7 +155,7 @@ io.on('connection', (socket) => {
             roomMap
         });
         io.in(currentUser.key).emit(systemSendMessage, {
-            message: `사용자 이름 '${name}'을(를) 부여받았습니다`
+            message: `내 이름: '${name}'`
         });
     });
 
@@ -166,7 +166,7 @@ io.on('connection', (socket) => {
 
         if (await redisClient.isDuplicatedName({ name: nickname })) {
             io.in(currentUser.key).emit(systemSendError, {
-                message: `'${nickname}'은(는) 중복된 닉네임입니다`
+                message: `'${nickname}'은(는) 중복되는 닉네임입니다.`
             });
         } else {
             await redisClient.updateName({ key: currentUser.key, name: nickname });
@@ -180,7 +180,7 @@ io.on('connection', (socket) => {
                 } 
             });
             socket.broadcast.emit(systemSendMessage, {
-                message: `유저 '${currentUser.name}'이(가) '${nickname}'로 이름을 변경했습니다!`
+                message: `'${currentUser.name}'이(가) '${nickname}'로 이름을 변경했습니다.`
             });
             io.in(currentUser.key).emit(systemSendData, {
                 name: nickname
@@ -218,7 +218,7 @@ io.on('connection', (socket) => {
             loudSpeakerOn
         });
         io.in(currentUser.key).emit(systemSendMessage, {
-            message: '확성기 설정을 변경했습니다'
+            message: `확성기 설정을 변경했습니다`
         });
     });
 
@@ -246,7 +246,7 @@ io.on('connection', (socket) => {
 
             if (userIds.length <= 1) {
                 return io.in(currentUser.key).emit(systemSendError, {
-                    message: '방 만들기에 실패했습니다!'
+                    message: `방을 생성하던 중 오류가 발생했습니다!`
                 });
             }
 
@@ -270,7 +270,7 @@ io.on('connection', (socket) => {
             });
         } else {
             io.in(currentUser.key).emit(systemSendError, {
-                message: `방을 만들 수 없습니다!`
+                message: `방을 생성하던 중 오류가 발생했습니다! 잠시후 다시 시도해주세요`
             });
         }
     });
@@ -301,7 +301,7 @@ io.on('connection', (socket) => {
             });
         } else {
             io.in(currentUser.key).emit(systemSendError, {
-                message: `빈 메시지가 전달되었습니다!`
+                message: `메시지를 전송하던 도중 오류가 발생했습니다!`
             });
         }
     });
@@ -314,7 +314,7 @@ io.on('connection', (socket) => {
         const room = redisClient.getRoomItem({ key: roomId });
         if (room.password && room.password !== password) {
             return io.in(currentUser.key).emit(systemSendError, {
-                message: `비밀번호가 틀렸습니다!`
+                message: `틀린 비밀번호입니다!`
             });
         }
 
@@ -332,7 +332,7 @@ io.on('connection', (socket) => {
             room: roomId
         });
         io.in(roomId).emit(roomSendMessage, {
-            message: `'${currentUser.name}'이(가) 방에 들어왔습니다!`
+            message: `'${currentUser.name}'이(가) 방에 들어왔습니다.`
         });
     });
 
@@ -355,14 +355,14 @@ io.on('connection', (socket) => {
                 });
 
                 return io.in(currentUser.key).emit(systemSendMessage, {
-                    message: '방에 남은 사람이 없어 방이 삭제되었습니다!'
+                    message: '사람이 없어 방이 삭제되었습니다!'
                 });
             }
             
             let additionalMessage = '';
             const idx = room.users.indexOf(currentUser.key);
             if (idx === 0) {
-                additionalMessage += `기존 방 주인이었던 '${currentUser.name}'이(가) 나갔으므로 '${(await redisClient.getUserItemByKey({ key: room.users[1] })).name}'이(가) 방 주인이 됩니다.`;
+                additionalMessage += `방 주인 '${currentUser.name}'이(가) 나갔으므로 '${(await redisClient.getUserItemByKey({ key: users[1] })).name}'이(가) 새로운 방 주인이 됩니다.`;
             }
 
             await redisClient.deleteUserFromRoom({ key: roomId, user: currentUser.key });
@@ -378,11 +378,11 @@ io.on('connection', (socket) => {
                 message: `'${currentUser.name}'가 방에서 나갔습니다. ${additionalMessage}`
             });
             io.in(currentUser.key).emit(systemSendMessage, {
-                message: '방에서 나왔습니다.'
+                message: `방에서 나왔습니다.`
             });
         } else {
             io.in(currentUser.key).emit(systemSendError, {
-                message: `정상적으로 방에서 나갈 수 없습니다!`
+                message: `방에서 나가던 도중 오류가 발생했습니다!`
             });
         }
     });
@@ -396,7 +396,7 @@ io.on('connection', (socket) => {
             await redisClient.updateRoomPassword({ key: roomId, password });
 
             io.in(currentUser.key).emit(systemSendMessage, {
-                message: '방 비밀번호를 변경했습니다.'
+                message: `방 비밀번호가 변경되었습니다.`
             });
             io.emit(systemSendData, {
                 roomIsLocked: {
@@ -406,7 +406,7 @@ io.on('connection', (socket) => {
             });
         } else {
             io.in(currentUser.key).emit(systemSendError, {
-                message: `정상적으로 방 비밀번호를 변경할 수 없습니다!`
+                message: `방 비밀번호를 변경하던 도중 오류가 발생했습니다!`
             });
         }
     });
@@ -439,7 +439,7 @@ io.on('connection', (socket) => {
                 if (idx >= 0) {
                     io.in(room.users[idx]).emit(userBlowUpRoom, {
                         room: roomId,
-                        message: '방에서 강퇴당했습니다.'
+                        message: `방장이 나를 강퇴시켰습니다.`
                     });
                     io.in(room.users[idx]).emit(systemDeleteData, {
                         myRoom: true
@@ -457,11 +457,11 @@ io.on('connection', (socket) => {
                 }
             });
             io.in(roomId).emit(roomSendMessage, {
-                message: `유저 ${kickedOutUsers.length}명이 방에서 강퇴당했습니다.`
+                message: `유저 ${kickedOutUsers.length}명이 방에서 강퇴 처리되었습니다.`
             });
         } else {
             io.in(currentUser.key).emit(systemSendError, {
-                message: `방에서 유저를 강퇴할 수 없습니다!`
+                message: `유저를 방에서 강퇴시키던 도중 오류가 발생했습니다!`
             });
         }
     });
