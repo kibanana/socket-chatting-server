@@ -41,7 +41,11 @@ server.listen(process.env.PORT || 3000, () => {
     console.log('Server is running!');
 })
 
-mongoose.connect('mongodb://localhost:27017', { useUnifiedTopology: true, useNewUrlParser: true, dbName: 'socket_chatting' });
+mongoose.connect('mongodb://localhost:27017', {
+    useUnifiedTopology: true,
+    useNewUrlParser: true,
+    dbName: 'socket_chatting'
+});
 mongoose.connection.once('open', () => {
     console.log('DB is connected!');
 })
@@ -50,8 +54,10 @@ const io = require('socket.io')(server, {
     pingTimeout: 60000,
     pingInterval: 60000
 });
-
-io.adapter(require('socket.io-redis')({ host: '127.0.0.1', port: 6379 }));
+io.adapter(require('socket.io-redis')({
+    host: '127.0.0.1',
+    port: 6379
+}));
 
 dataManager.setIo(io);
 
@@ -72,7 +78,10 @@ io.on('connection', (socket) => {
 
             if (users.length <= 1) {
                 await redisClient.deleteRoom({ key: roomId });
-                return socket.broadcast.emit(adminDeleteData, { room: roomId });
+
+                return socket.broadcast.emit(adminDeleteData, {
+                    room: roomId
+                });
             }
             
             let additionalMessage = '';
@@ -85,9 +94,11 @@ io.on('connection', (socket) => {
             users.splice(idx, 1);
 
             socket.broadcast.emit(adminSendData, {
-                roomUsers: { room: roomId, users }
+                roomUsers: {
+                    room: roomId,
+                    users
+                }
             });
-
             socket.to(roomId).emit(adminSendMessage, {
                 message: `'${currentUser.name}'가 방에서 나갔습니다. ${additionalMessage}`
             });
@@ -96,7 +107,9 @@ io.on('connection', (socket) => {
         socket.broadcast.emit(userNotice, {
             message: `${currentUser.name}이(가) 접속을 종료했습니다!`
         });
-        socket.broadcast.emit(adminDeleteData, { user: currentUser.key });
+        socket.broadcast.emit(adminDeleteData, {
+            user: currentUser.key
+        });
 
         redisClient.updateUserInactivated({ key: currentUser.key, lastSocketId: socketId });
         redisClient.updateUsernameInactivated({ name: currentUser.name, key: currentUser.key });
@@ -113,8 +126,13 @@ io.on('connection', (socket) => {
             await redisClient.updateUsernameActivated({ name: currentUser.name, key: currentUser.key });
         }
         
-        socket.broadcast.emit(userNotice, { message: `'${name}'이(가) 서버에 접속했습니다!` });
-        socket.broadcast.emit(adminSendData, { userMap: { [currentUser.key]: currentUser } });
+        socket.broadcast.emit(userNotice, {
+            message: `'${name}'이(가) 서버에 접속했습니다!`
+        });
+        socket.broadcast.emit(adminSendData, {
+            userMap: { [currentUser.key]: currentUser }
+        });
+
         const userMap = {};
         const roomMap = {};
         const users = await redisClient.getUserList();
@@ -131,7 +149,9 @@ io.on('connection', (socket) => {
             userMap,
             roomMap
         });
-        io.in(currentUser.key).emit(adminSendMessage, { message: `사용자 이름 '${name}'을(를) 부여받았습니다` });
+        io.in(currentUser.key).emit(adminSendMessage, {
+            message: `사용자 이름 '${name}'을(를) 부여받았습니다`
+        });
     });
 
     socket.on(userChangeName, async (data) => {
@@ -140,17 +160,26 @@ io.on('connection', (socket) => {
         const { text: nickname } = data;
 
         if (await redisClient.isDuplicatedName({ name: nickname })) {
-            io.in(currentUser.key).emit(adminSendError, { message: `'${nickname}'은(는) 중복된 닉네임입니다` });
+            io.in(currentUser.key).emit(adminSendError, {
+                message: `'${nickname}'은(는) 중복된 닉네임입니다`
+            });
         } else {
             await redisClient.updateName({ key: currentUser.key, name: nickname });
 
             socket.broadcast.emit(adminSendData, {
-                userMap: { [socketId]: { ...currentUser, name: nickname } } 
+                userMap: {
+                    [socketId]: {
+                        ...currentUser,
+                        name: nickname
+                    }
+                } 
             });
             socket.broadcast.emit(adminSendMessage, {
                 message: `유저 '${currentUser.name}'이(가) '${nickname}'로 이름을 변경했습니다!`
             });
-            io.in(currentUser.key).emit(adminSendData, { name: nickname });
+            io.in(currentUser.key).emit(adminSendData, {
+                name: nickname
+            });
             // io.to(socket.id).emit(adminSendData, { name: nickname }); // Send to specific socket id
         }
     });
@@ -160,7 +189,10 @@ io.on('connection', (socket) => {
         const currentUser = await redisClient.getUserBySocketId({ key: socketId });
         const { text: message } = data;
         
-        io.in('loud_speaker').emit(userLoudSpeaker, { user: currentUser.name, message });
+        io.in('loud_speaker').emit(userLoudSpeaker, {
+            user: currentUser.name,
+            message
+        });
     });
 
     socket.on(userUpdateLoudSpeakerSettings, async () => {
@@ -177,8 +209,12 @@ io.on('connection', (socket) => {
             socket.join('loud_speaker');
         }
 
-        io.in(currentUser.key).emit(adminSendData, { loudSpeakerOn });
-        io.in(currentUser.key).emit(adminSendMessage, { message: '확성기 설정을 변경했습니다' });
+        io.in(currentUser.key).emit(adminSendData, {
+            loudSpeakerOn
+        });
+        io.in(currentUser.key).emit(adminSendMessage, {
+            message: '확성기 설정을 변경했습니다'
+        });
     });
 
     socket.on(userCreateRoom, async (data) => {
@@ -196,20 +232,41 @@ io.on('connection', (socket) => {
             socket.join(roomId);
             
             userIds.forEach(userKey => {
-                if (userKey !== currentUser.key) io.in(userKey).emit(usetGetRoomInvitation, { room: roomId, message });
+                if (userKey !== currentUser.key) {
+                    io.in(userKey).emit(usetGetRoomInvitation, {
+                        room: roomId, message
+                    });
+                }
             });
 
             if (userIds.length <= 1) {
-                return io.in(currentUser.key).emit(adminSendError, { message: '방 만들기에 실패했습니다!' });
+                return io.in(currentUser.key).emit(adminSendError, {
+                    message: '방 만들기에 실패했습니다!'
+                });
             }
 
             const room = await redisClient.getRoomItem({ key: roomId });
             
-            io.emit(adminSendData, { roomMap: { [roomId]: { ...room, users: JSON.parse(room.users), password: undefined, isLocked: Boolean(password) } } });
-            io.in(roomId).emit(adminSendData, { room: roomId });
-            io.in(currentUser.key).emit(adminSendMessage, { message });
+            io.emit(adminSendData, {
+                roomMap: {
+                    [roomId]: {
+                        ...room,
+                        users: JSON.parse(room.users),
+                        password: undefined,
+                        isLocked: Boolean(password)
+                    }
+                }
+            });
+            io.in(roomId).emit(adminSendData, {
+                room: roomId
+            });
+            io.in(currentUser.key).emit(adminSendMessage, {
+                message
+            });
         } else {
-            io.in(currentUser.key).emit(adminSendError, { message: `방을 만들 수 없습니다!` });
+            io.in(currentUser.key).emit(adminSendError, {
+                message: `방을 만들 수 없습니다!`
+            });
         }
     });
 
@@ -219,8 +276,12 @@ io.on('connection', (socket) => {
         const { room: roomId, message } = data;
 
         socket.join(roomId);
-        io.in(currentUser.key).emit(adminSendData, { room: roomId });
-        io.in(currentUser.key).emit(adminSendMessage, { message });
+        io.in(currentUser.key).emit(adminSendData, {
+            room: roomId
+        });
+        io.in(currentUser.key).emit(adminSendMessage, {
+            message
+        });
     });
 
     socket.on(userSendMessage, async (data) => {
@@ -229,9 +290,14 @@ io.on('connection', (socket) => {
         const { text: message, room: roomId } = data;
 
         if (message && roomId) {
-            io.in(roomId).emit(userSendMessage, { user: currentUser.name, message });
+            io.in(roomId).emit(userSendMessage, {
+                user: currentUser.name,
+                message
+            });
         } else {
-            io.in(currentUser.key).emit(adminSendError, { message: `빈 메시지가 전달되었습니다!` });
+            io.in(currentUser.key).emit(adminSendError, {
+                message: `빈 메시지가 전달되었습니다!`
+            });
         }
     });
 
@@ -242,15 +308,27 @@ io.on('connection', (socket) => {
 
         const room = redisClient.getRoomItem({ key: roomId });
         if (room.password && room.password !== password) {
-            return io.in(currentUser.key).emit(adminSendError, { message: `비밀번호가 틀렸습니다!` });
+            return io.in(currentUser.key).emit(adminSendError, {
+                message: `비밀번호가 틀렸습니다!`
+            });
         }
 
         socket.join(roomId);
         await redisClient.addUserToRoom({ key: roomId, user: currentUser.key });
+        const users = JSON.parse((await redisClient.getRoomItem({ key: roomId })).users)
 
-        io.emit(adminSendData, { roomUsers: { room: roomId, users: JSON.parse((await redisClient.getRoomItem({ key: roomId })).users) } });
-        io.in(roomId).emit(adminSendData, { room: roomId });
-        io.in(roomId).emit(adminSendMessage, { message: `'${currentUser.name}'이(가) 방에 들어왔습니다!` });
+        io.emit(adminSendData, {
+            roomUsers: {
+                room: roomId,
+                users
+            }
+        });
+        io.in(roomId).emit(adminSendData, {
+            room: roomId
+        });
+        io.in(roomId).emit(adminSendMessage, {
+            message: `'${currentUser.name}'이(가) 방에 들어왔습니다!`
+        });
     });
 
     socket.on(userLeaveRoom, async (data) => {
@@ -263,10 +341,15 @@ io.on('connection', (socket) => {
 
             const room = await redisClient.getRoomItem({ key: roomId });
             room.users = JSON.parse(room.users);
+
             if (room.users.length <= 1) {
                 await redisClient.deleteRoom({ key: roomId });
-                io.emit(adminDeleteData, { room: roomId });
-                return io.in(currentUser.key).emit(adminSendMessage, { message: '방에 남은 사람이 없어 방이 삭제되었습니다!' });
+                io.emit(adminDeleteData, {
+                    room: roomId
+                });
+                return io.in(currentUser.key).emit(adminSendMessage, {
+                    message: '방에 남은 사람이 없어 방이 삭제되었습니다!'
+                });
             }
             
             let additionalMessage = '';
@@ -278,13 +361,22 @@ io.on('connection', (socket) => {
             await redisClient.deleteUserFromRoom({ key: roomId, user: currentUser.key });
             room.users.splice(idx, 1);
 
-            io.emit(adminSendData, { roomUsers: { room: roomId, users: room.users } });
+            io.emit(adminSendData, {
+                roomUsers: {
+                    room: roomId,
+                    users: room.users
+                }
+            });
             socket.to(roomId).emit(adminSendMessage, {
                 message: `'${currentUser.name}'가 방에서 나갔습니다. ${additionalMessage}`
             });
-            io.in(currentUser.key).emit(adminSendMessage, { message: '방에서 나왔습니다.'});
+            io.in(currentUser.key).emit(adminSendMessage, {
+                message: '방에서 나왔습니다.'
+            });
         } else {
-            io.in(currentUser.key).emit(adminSendError, { message: `정상적으로 방에서 나갈 수 없습니다!` });
+            io.in(currentUser.key).emit(adminSendError, {
+                message: `정상적으로 방에서 나갈 수 없습니다!`
+            });
         }
     });
 
@@ -296,10 +388,19 @@ io.on('connection', (socket) => {
         if (roomId) {
             await redisClient.updateRoomPassword({ key: roomId, password });
 
-            io.in(currentUser.key).emit(adminSendMessage, { message: '방 비밀번호를 변경했습니다.'});
-            io.emit(adminSendData, { roomIsLocked: { room: roomId, isLocked: Boolean(password) } });
+            io.in(currentUser.key).emit(adminSendMessage, {
+                message: '방 비밀번호를 변경했습니다.'
+            });
+            io.emit(adminSendData, {
+                roomIsLocked: {
+                    room: roomId,
+                    isLocked: Boolean(password)
+                }
+            });
         } else {
-            io.in(currentUser.key).emit(adminSendError, { message: `정상적으로 방 비밀번호를 변경할 수 없습니다!` });
+            io.in(currentUser.key).emit(adminSendError, {
+                message: `정상적으로 방 비밀번호를 변경할 수 없습니다!`
+            });
         }
     });
 
@@ -309,8 +410,12 @@ io.on('connection', (socket) => {
         const { room: roomId, message } = data;
 
         socket.leave(roomId);
-        io.in(currentUser.key).emit(adminDeleteData, { myRoom: true });
-        io.in(currentUser.key).emit(adminSendMessage, { message });
+        io.in(currentUser.key).emit(adminDeleteData, {
+            myRoom: true
+        });
+        io.in(currentUser.key).emit(adminSendMessage, {
+            message
+        });
     })
 
     socket.on(userKickOutRoom, async (data) => {
@@ -325,17 +430,32 @@ io.on('connection', (socket) => {
                 const idx = room.users.indexOf(kickedOutUsers[0]);
     
                 if (idx >= 0) {
-                    io.in(room.users[idx]).emit(userBlowUpRoom, { room: roomId, message: '방에서 강퇴당했습니다.' });
-                    io.in(room.users[idx]).emit(adminDeleteData, { myRoom: true });
+                    io.in(room.users[idx]).emit(userBlowUpRoom, {
+                        room: roomId,
+                        message: '방에서 강퇴당했습니다.'
+                    });
+                    io.in(room.users[idx]).emit(adminDeleteData, {
+                        myRoom: true
+                    });
+                    
                     await redisClient.deleteUserFromRoom({ key: roomId, user: room.users[idx] });
                     room.users.splice(idx, 1);
                 }
             }
 
-            io.emit(adminSendData, { roomUsers: { room: roomId, users: room.users } });
-            io.in(roomId).emit(adminSendMessage, { message: `유저 ${kickedOutUsers.length}명이 방에서 강퇴당했습니다.` });
+            io.emit(adminSendData, {
+                roomUsers: {
+                    room: roomId,
+                    users: room.users
+                }
+            });
+            io.in(roomId).emit(adminSendMessage, {
+                message: `유저 ${kickedOutUsers.length}명이 방에서 강퇴당했습니다.`
+            });
         } else {
-            io.in(currentUser.key).emit(adminSendError, { message: `방에서 유저를 강퇴할 수 없습니다!` });
+            io.in(currentUser.key).emit(adminSendError, {
+                message: `방에서 유저를 강퇴할 수 없습니다!`
+            });
         }
     });
 
@@ -345,8 +465,12 @@ io.on('connection', (socket) => {
         const { room: roomId, message } = data;
 
         socket.leave(roomId);
-        io.in(currentUser.key).emit(adminDeleteData, { myRoom: true });
-        io.in(currentUser.key).emit(adminSendMessage, { message });
+        io.in(currentUser.key).emit(adminDeleteData, {
+            myRoom: true
+        });
+        io.in(currentUser.key).emit(adminSendMessage, {
+            message
+        });
     });
 
     socket.on(userBlowUpRoom, async (data) => {
@@ -359,11 +483,20 @@ io.on('connection', (socket) => {
         socket.leave(roomId);
         
         room.users.forEach(userKey => {
-            if (userKey !== currentUser.key) io.in(userKey).emit(userBlowUpRoom, { room: roomId, message: '방이 폭파되었습니다.' });
+            if (userKey !== currentUser.key) {
+                io.in(userKey).emit(userBlowUpRoom, {
+                    room: roomId,
+                    message: '방이 폭파되었습니다.'
+                });
+            }
         });
 
-        io.emit(adminDeleteData, { room: roomId });
-        io.in(currentUser.key).emit(adminSendMessage, { message: '방을 폭파했습니다.'});
+        io.emit(adminDeleteData, {
+            room: roomId
+        });
+        io.in(currentUser.key).emit(adminSendMessage, {
+            message: '방을 폭파했습니다.'
+        });
     });
 
     socket.on(userSetRoomNotice, (data) => {
