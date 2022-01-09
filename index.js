@@ -12,6 +12,7 @@ const {
         roomSendMessage
     },
     systemEventType: {
+        systemNotify,
         systemDeleteData,
         systemSendData,
         systemSendError,
@@ -19,7 +20,6 @@ const {
     },
     userEventType: {
         userRegister,
-        userNotice,
         userChangeName,
         userLoudSpeaker,
         userUpdateLoudSpeakerSettings,
@@ -107,7 +107,7 @@ io.on('connection', (socket) => {
             });
         }
 
-        socket.broadcast.emit(userNotice, {
+        socket.broadcast.emit(systemNotify, {
             message: `${currentUser.name}이(가) 접속을 종료했습니다.`
         });
         socket.broadcast.emit(systemDeleteData, {
@@ -129,7 +129,7 @@ io.on('connection', (socket) => {
             await redisClient.updateUsernameActivated({ name: currentUser.name, key: currentUser.key });
         }
         
-        socket.broadcast.emit(userNotice, {
+        socket.broadcast.emit(systemNotify, {
             message: `'${name}'이(가) 접속했습니다.`
         });
         socket.broadcast.emit(systemSendData, {
