@@ -97,6 +97,7 @@ io.on('connection', (socket) => {
             users.splice(idx, 1);
 
             socket.broadcast.emit(systemSendData, {
+                eventType: 'disconnect',
                 roomUsers: {
                     room: roomId,
                     users
@@ -133,6 +134,7 @@ io.on('connection', (socket) => {
             message: `'${name}'이(가) 접속했습니다.`
         });
         socket.broadcast.emit(systemSendData, {
+            eventType: userRegister,
             userMap: {
                 [currentUser.key]: currentUser
             }
@@ -149,6 +151,7 @@ io.on('connection', (socket) => {
         socket.join('loud_speaker');
         
         io.in(currentUser.key).emit(systemSendData, {
+            eventType: userRegister,
             id: currentUser.key,
             name,
             userMap,
@@ -172,6 +175,7 @@ io.on('connection', (socket) => {
             await redisClient.updateName({ key: currentUser.key, name: nickname });
 
             socket.broadcast.emit(systemSendData, {
+                eventType: userChangeName,
                 userMap: {
                     [socketId]: {
                         ...currentUser,
@@ -183,9 +187,13 @@ io.on('connection', (socket) => {
                 message: `'${currentUser.name}'이(가) '${nickname}'로 이름을 변경했습니다.`
             });
             io.in(currentUser.key).emit(systemSendData, {
+                eventType: userChangeName,
                 name: nickname
             });
-            // io.to(socket.id).emit(systemSendData, { name: nickname }); // Send to specific socket id
+            // io.to(socket.id).emit(systemSendData, {
+            //     eventType: userChangeName,
+            //     name: nickname
+            // }); // Send to specific socket id
         }
     });
 
@@ -215,6 +223,7 @@ io.on('connection', (socket) => {
         }
 
         io.in(currentUser.key).emit(systemSendData, {
+            eventType: userUpdateLoudSpeakerSettings,
             loudSpeakerOn
         });
         io.in(currentUser.key).emit(systemSendMessage, {
@@ -253,6 +262,7 @@ io.on('connection', (socket) => {
             const room = await redisClient.getRoomItem({ key: roomId });
             
             io.emit(systemSendData, {
+                eventType: userCreateRoom,
                 roomMap: {
                     [roomId]: {
                         ...room,
@@ -282,6 +292,7 @@ io.on('connection', (socket) => {
 
         socket.join(roomId);
         io.in(currentUser.key).emit(systemSendData, {
+            eventType: usetGetRoomInvitation,
             room: roomId
         });
         io.in(currentUser.key).emit(systemSendMessage, {
@@ -323,6 +334,7 @@ io.on('connection', (socket) => {
         const users = JSON.parse((await redisClient.getRoomItem({ key: roomId })).users)
 
         io.emit(systemSendData, {
+            eventType: userJoinRoom,
             roomUsers: {
                 room: roomId,
                 users
@@ -369,6 +381,7 @@ io.on('connection', (socket) => {
             room.users.splice(idx, 1);
 
             io.emit(systemSendData, {
+                eventType: userLeaveRoom,
                 roomUsers: {
                     room: roomId,
                     users: room.users
@@ -399,6 +412,7 @@ io.on('connection', (socket) => {
                 message: `방 비밀번호가 변경되었습니다.`
             });
             io.emit(systemSendData, {
+                eventType: userUpdateRoomPassword,
                 roomIsLocked: {
                     room: roomId,
                     isLocked: Boolean(password)
@@ -418,7 +432,7 @@ io.on('connection', (socket) => {
 
         socket.leave(roomId);
         io.in(currentUser.key).emit(systemDeleteData, {
-            myRoom: true
+            isRoomMine: true
         });
         io.in(currentUser.key).emit(systemSendMessage, {
             message
@@ -442,7 +456,7 @@ io.on('connection', (socket) => {
                         message: `방장이 나를 강퇴시켰습니다.`
                     });
                     io.in(room.users[idx]).emit(systemDeleteData, {
-                        myRoom: true
+                        isRoomMine: true
                     });
                     
                     await redisClient.deleteUserFromRoom({ key: roomId, user: room.users[idx] });
@@ -451,6 +465,7 @@ io.on('connection', (socket) => {
             }
 
             io.emit(systemSendData, {
+                eventType: userKickOutRoom,
                 roomUsers: {
                     room: roomId,
                     users: room.users
@@ -473,7 +488,7 @@ io.on('connection', (socket) => {
 
         socket.leave(roomId);
         io.in(currentUser.key).emit(systemDeleteData, {
-            myRoom: true
+            isRoomMine: true
         });
         io.in(currentUser.key).emit(systemSendMessage, {
             message
