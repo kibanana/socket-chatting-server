@@ -3,6 +3,7 @@ const { connection } = require('mongoose');
 
 const userColl = connection.collection('users');
 const roomColl = connection.collection('rooms');
+const errorColl = connection.collection('errors');
 
 // users
 const createUser = (params) => {
@@ -101,6 +102,11 @@ const deleteAllRooms = () => {
     return roomColl.deleteMany();
 };
 
+// error
+const createError = (params) => {
+    return errorColl.insertOne({ ...params, createdAt: new Date() });
+};
+
 module.exports = {
     createUser,
     updateName,
@@ -123,5 +129,7 @@ module.exports = {
     getRoomByUser,
 
     updateAllUsersInactivated,
-    deleteAllRooms
+    deleteAllRooms,
+
+    createError
 };
